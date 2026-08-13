@@ -1,8 +1,8 @@
-# Cumulist
+# GetDone
 
 **Local by default. Synced when you want.**
 
-Cumulist is a polished, local-first task-management web app. It runs in any modern browser and ships as a production Docker image, making it portable across Linux, macOS, Windows, NAS devices, and cloud hosts.
+GetDone is a polished, local-first task-management web app. It runs in any modern browser and ships as a production Docker image, making it portable across Linux, macOS, Windows, NAS devices, and cloud hosts.
 
 ## Current milestone
 
@@ -35,7 +35,7 @@ On another device in the same LAN, replace `localhost` with the host's IP addres
 Change the published port in `.env`:
 
 ```dotenv
-CUMULIST_PORT=3080
+GETDONE_PORT=3080
 ```
 
 ## Verify and administer
@@ -93,7 +93,7 @@ S3 synchronization requires a backend component because browser JavaScript canno
 The planned backend will:
 
 1. Run as a separate Compose service.
-2. Mount the host's AWS configuration read-only, for example `${HOME}/.aws:/home/cumulist/.aws:ro`.
+2. Mount the host's AWS configuration read-only, for example `${HOME}/.aws:/home/getdone/.aws:ro`.
 3. Select a named profile through `AWS_PROFILE`.
 4. Keep access keys out of source code, browser storage, and container images.
 5. Add encrypted snapshots first, followed by operation-based multi-device synchronization.
@@ -111,4 +111,4 @@ The production web container:
 - Exposes only internal port `8080` through the selected host port.
 - Provides `/healthz` for orchestration checks.
 
-Use HTTPS through a reverse proxy before exposing Cumulist outside a trusted LAN.
+Use HTTPS through a reverse proxy before exposing GetDone outside a trusted LAN.

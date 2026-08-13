@@ -39,7 +39,7 @@ export const initialTasks: Task[] = [
     id: 'welcome-3',
     title: 'Set up S3 backup profile',
     status: 'open',
-    project: 'Cumulist',
+    project: 'GetDone',
     priority: 'low',
     note: 'S3 backup and multi-device sync arrive in a later milestone.',
     createdAt: new Date().toISOString(),

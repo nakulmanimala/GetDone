@@ -38,7 +38,7 @@ const viewLabels: Record<View, string> = {
 }
 
 const viewIcons = { inbox: Inbox, today: CalendarDays, upcoming: Archive, completed: CheckCircle2 }
-const projectColors: Record<string, string> = { Personal: '#a78bfa', DevOps: '#38bdf8', Cumulist: '#34d399', Inbox: '#8a8f98' }
+const projectColors: Record<string, string> = { Personal: '#a78bfa', DevOps: '#38bdf8', GetDone: '#34d399', Inbox: '#8a8f98' }
 
 function formatDueDate(date?: string) {
   if (!date) return 'No due date'
@@ -94,7 +94,7 @@ function App() {
       <aside className={`sidebar ${sidebarOpen ? 'sidebar-open' : ''}`}>
         <div className="brand-row">
           <div className="brand-mark"><Check size={17} strokeWidth={3} /></div>
-          <div><strong>Cumulist</strong><span>Your local workspace</span></div>
+          <div><strong>GetDone</strong><span>Your local workspace</span></div>
           <button className="icon-button sidebar-close" onClick={() => setSidebarOpen(false)} aria-label="Close sidebar"><X size={18} /></button>
         </div>
 
@@ -110,7 +110,7 @@ function App() {
 
         <div className="section-label">Projects <Plus size={14} /></div>
         <div className="project-list">
-          {['Personal', 'DevOps', 'Cumulist'].map((project) => <button key={project}><i style={{ background: projectColors[project] }} />{project}<span>{tasks.filter((task) => task.project === project && task.status === 'open').length}</span></button>)}
+          {['Personal', 'DevOps', 'GetDone'].map((project) => <button key={project}><i style={{ background: projectColors[project] }} />{project}<span>{tasks.filter((task) => task.project === project && task.status === 'open').length}</span></button>)}
         </div>
 
         <div className="sidebar-footer">
@@ -162,7 +162,7 @@ function App() {
         <div className="detail-body">
           <button className={`large-check priority-${selected.priority}`} onClick={() => setTasks(selected.status === 'completed' ? reopenTask(tasks, selected.id) : completeTask(tasks, selected.id))}>{selected.status === 'completed' && <Check size={16} />}</button>
           <textarea className="title-editor" value={selected.title} onChange={(event) => setTasks(updateTask(tasks, { ...selected, title: event.target.value }))} aria-label="Task title" />
-          <label>Project<select value={selected.project} onChange={(event) => setTasks(updateTask(tasks, { ...selected, project: event.target.value }))}>{['Inbox', 'Personal', 'DevOps', 'Cumulist'].map((project) => <option key={project}>{project}</option>)}</select></label>
+          <label>Project<select value={selected.project} onChange={(event) => setTasks(updateTask(tasks, { ...selected, project: event.target.value }))}>{['Inbox', 'Personal', 'DevOps', 'GetDone'].map((project) => <option key={project}>{project}</option>)}</select></label>
           <label>Due date<input type="date" value={selected.dueDate ?? ''} onChange={(event) => setTasks(updateTask(tasks, { ...selected, dueDate: event.target.value || undefined }))} /></label>
           <label>Priority<select value={selected.priority} onChange={(event) => setTasks(updateTask(tasks, { ...selected, priority: event.target.value as Task['priority'] }))}><option value="none">None</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></label>
           <label>Notes<textarea className="note-editor" value={selected.note ?? ''} placeholder="Add notes…" onChange={(event) => setTasks(updateTask(tasks, { ...selected, note: event.target.value }))} /></label>

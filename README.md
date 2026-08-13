@@ -38,15 +38,25 @@ For frontend-only development:
 npm run dev
 ```
 
-## Build for macOS
+## Build for Apple Silicon macOS
 
-Run this command on the target Mac:
+### On an Apple Silicon Mac
 
 ```bash
-npm run tauri build
+./scripts/build-macos-arm64.sh
 ```
 
-Tauri will produce the `.app` bundle and `.dmg` in `src-tauri/target/release/bundle/`.
+The script verifies macOS prerequisites, runs tests and lint, and builds native ARM64 `.app` and `.dmg` bundles in:
+
+```text
+src-tauri/target/aarch64-apple-darwin/release/bundle/
+```
+
+### With GitHub Actions
+
+The repository includes `.github/workflows/build-macos-arm64.yml`. Push the repository to GitHub, open **Actions → Build macOS Apple Silicon → Run workflow**, then download the `Momentum-macOS-Apple-Silicon-unsigned` artifact.
+
+The current build is unsigned. macOS may require a right-click → **Open** for local testing. Public distribution requires an Apple Developer ID certificate and notarization credentials.
 
 ## AWS design
 

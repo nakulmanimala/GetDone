@@ -1,5 +1,5 @@
 {
-  "name": "nakul-todo",
+  "name": "cumulist",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -9,17 +9,14 @@
     "lint": "oxlint",
     "test": "vitest run",
     "test:watch": "vitest",
-    "preview": "vite preview",
-    "tauri": "tauri"
+    "preview": "vite preview"
   },
   "dependencies": {
-    "@tauri-apps/api": "^2.11.1",
     "lucide-react": "^1.31.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.11.4",
     "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.4",

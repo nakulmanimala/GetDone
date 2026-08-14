@@ -15,6 +15,7 @@ import {
   Strikethrough,
   TriangleAlert,
   Underline,
+  X,
 } from 'lucide-react'
 import type { Priority, Repeat, TaskDraft } from '../domain/tasks'
 import { compressImageFile, findImageFile } from '../media/clipboardImage'
@@ -49,7 +50,10 @@ export function TaskCreateModal({ initialTitle, initialProject, projects, onCanc
   const [customReminder, setCustomReminder] = useState('')
   const [priority, setPriority] = useState<Priority>('none')
   const [flagged, setFlagged] = useState(false)
+  const [linkOpen, setLinkOpen] = useState(false)
+  const [linkUrl, setLinkUrl] = useState('')
   const editorRef = useRef<HTMLDivElement>(null)
+  const savedRangeRef = useRef<Range | null>(null)
 
   useEffect(() => {
     function handleKey(event: KeyboardEvent) {
@@ -67,9 +71,35 @@ export function TaskCreateModal({ initialTitle, initialProject, projects, onCanc
     document.execCommand(command, false, value)
   }
 
-  function insertLink() {
-    const url = window.prompt('Link URL')
-    if (url?.trim()) exec('createLink', url.trim())
+  function openLinkPopover() {
+    // The URL input will steal focus, so remember what was selected in the
+    // editor to re-apply it when the link is inserted.
+    const selection = window.getSelection()
+    savedRangeRef.current =
+      selection && selection.rangeCount > 0 && editorRef.current?.contains(selection.getRangeAt(0).commonAncestorContainer)
+        ? selection.getRangeAt(0).cloneRange()
+        : null
+    setLinkUrl('')
+    setLinkOpen(true)
+  }
+
+  function applyLink() {
+    const raw = linkUrl.trim()
+    setLinkOpen(false)
+    if (!raw) return
+    const url = /^(https?:\/\/|mailto:)/i.test(raw) ? raw : `https://${raw}`
+    editorRef.current?.focus()
+    const selection = window.getSelection()
+    if (savedRangeRef.current && selection) {
+      selection.removeAllRanges()
+      selection.addRange(savedRangeRef.current)
+    }
+    if (savedRangeRef.current && !savedRangeRef.current.collapsed) {
+      document.execCommand('createLink', false, url)
+    } else {
+      const escaped = url.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+      document.execCommand('insertHTML', false, `<a href="${escaped}">${escaped}</a>`)
+    }
   }
 
   function handleDescriptionPaste(event: ClipboardEvent<HTMLDivElement>) {
@@ -184,8 +214,28 @@ export function TaskCreateModal({ initialTitle, initialProject, projects, onCanc
               <button type="button" onMouseDown={keepSelection} onClick={() => exec('insertUnorderedList')} aria-label="Bulleted list"><List size={14} /></button>
               <button type="button" onMouseDown={keepSelection} onClick={() => exec('insertOrderedList')} aria-label="Numbered list"><ListOrdered size={14} /></button>
               <span className="toolbar-divider" />
-              <button type="button" onMouseDown={keepSelection} onClick={insertLink} aria-label="Insert link"><Link2 size={14} /></button>
+              <button type="button" onMouseDown={keepSelection} onClick={openLinkPopover} aria-label="Insert link"><Link2 size={14} /></button>
             </div>
+            {linkOpen && (
+              <div className="link-popover">
+                <Link2 size={14} />
+                <input
+                  autoFocus
+                  value={linkUrl}
+                  onChange={(event) => setLinkUrl(event.target.value)}
+                  onKeyDown={(event) => {
+                    // Keep Escape/Enter local: the modal itself closes on Escape.
+                    event.stopPropagation()
+                    if (event.key === 'Enter') { event.preventDefault(); applyLink() }
+                    if (event.key === 'Escape') setLinkOpen(false)
+                  }}
+                  placeholder="Paste or type a link"
+                  aria-label="Link URL"
+                />
+                <button type="button" className="link-apply" onClick={applyLink}>Add link</button>
+                <button type="button" className="link-close" onClick={() => setLinkOpen(false)} aria-label="Close link editor"><X size={14} /></button>
+              </div>
+            )}
             <div
               ref={editorRef}
               className="rich-input"

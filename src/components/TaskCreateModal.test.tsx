@@ -107,6 +107,35 @@ describe('TaskCreateModal', () => {
     expect(onCreate).not.toHaveBeenCalled()
   })
 
+  it('inserts a link through the themed popover, normalizing bare domains', async () => {
+    const user = userEvent.setup()
+    renderModal({ initialTitle: 'Ship it' })
+    const execCommand = vi.fn()
+    document.execCommand = execCommand
+
+    await user.click(screen.getByRole('button', { name: 'Insert link' }))
+    await user.type(screen.getByLabelText('Link URL'), 'example.com/docs')
+    await user.click(screen.getByRole('button', { name: 'Add link' }))
+
+    expect(execCommand).toHaveBeenCalledWith(
+      'insertHTML',
+      false,
+      '<a href="https://example.com/docs">https://example.com/docs</a>',
+    )
+    expect(screen.queryByLabelText('Link URL')).not.toBeInTheDocument()
+  })
+
+  it('closes the link popover on Escape without closing the modal', async () => {
+    const user = userEvent.setup()
+    const { onCancel } = renderModal({ initialTitle: 'Ship it' })
+
+    await user.click(screen.getByRole('button', { name: 'Insert link' }))
+    await user.keyboard('{Escape}')
+
+    expect(screen.queryByLabelText('Link URL')).not.toBeInTheDocument()
+    expect(onCancel).not.toHaveBeenCalled()
+  })
+
   it('compresses a pasted image instead of inserting it raw', async () => {
     renderModal({ initialTitle: 'Ship it' })
     const editor = screen.getByLabelText('Task description')

@@ -122,6 +122,7 @@ kbd { margin-left:auto; padding:2px 5px; color:var(--faint); background:rgba(255
 .rich-input:focus { border-color:rgba(130,143,255,.4); }
 .rich-input:empty::before,.rich-note:empty::before { content:attr(data-placeholder); color:var(--faint); pointer-events:none; }
 .rich-input ul,.rich-input ol,.rich-note ul,.rich-note ol { margin:6px 0; padding-left:18px; }
+.rich-input img,.rich-note img { display:block; max-width:100%; height:auto; margin:6px 0; border-radius:6px; }
 .rich-input a,.rich-note a { color:var(--accent); }
 .rich-note { cursor:text; }
 .chip-group { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }

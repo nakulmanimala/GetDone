@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type MouseEvent } from 'react'
+import { useEffect, useRef, useState, type ClipboardEvent, type MouseEvent } from 'react'
 import {
   Bell,
   Bold,
@@ -17,6 +17,7 @@ import {
   Underline,
 } from 'lucide-react'
 import type { Priority, Repeat, TaskDraft } from '../domain/tasks'
+import { compressImageFile, findImageFile } from '../media/clipboardImage'
 import { sanitizeHtml } from './richText'
 
 type DueChoice = 'today' | 'tomorrow' | 'custom' | null
@@ -71,6 +72,23 @@ export function TaskCreateModal({ initialTitle, initialProject, projects, onCanc
     if (url?.trim()) exec('createLink', url.trim())
   }
 
+  function handleDescriptionPaste(event: ClipboardEvent<HTMLDivElement>) {
+    const file = findImageFile(event.clipboardData?.items)
+    if (!file) return
+    // Never let the browser insert the raw image: a heavy paste would render
+    // at natural size (bursting the dialog) and be stored uncompressed.
+    // stopPropagation keeps the app-level paste listener from also attaching
+    // it to whichever task is selected behind the dialog.
+    event.preventDefault()
+    event.stopPropagation()
+    compressImageFile(file)
+      .then((dataUrl) => {
+        editorRef.current?.focus()
+        document.execCommand('insertImage', false, dataUrl)
+      })
+      .catch(() => {})
+  }
+
   function handleCreate() {
     const trimmed = title.trim()
     if (!trimmed) {
@@ -78,7 +96,7 @@ export function TaskCreateModal({ initialTitle, initialProject, projects, onCanc
       return
     }
 
-    const hasNote = Boolean(editorRef.current?.textContent?.trim())
+    const hasNote = Boolean(editorRef.current?.textContent?.trim()) || Boolean(editorRef.current?.querySelector('img'))
     onCreate({
       title: trimmed,
       note: hasNote ? sanitizeHtml(editorRef.current?.innerHTML ?? '') : undefined,
@@ -176,6 +194,7 @@ export function TaskCreateModal({ initialTitle, initialProject, projects, onCanc
               aria-multiline="true"
               aria-label="Task description"
               data-placeholder="What is this task about?"
+              onPaste={handleDescriptionPaste}
             />
           </div>
         </div>

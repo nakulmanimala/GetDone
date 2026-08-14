@@ -1,8 +1,14 @@
 import { describe, expect, it, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { TaskCreateModal } from './TaskCreateModal'
 import { sanitizeHtml, stripHtml } from './richText'
+
+vi.mock('../media/clipboardImage', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../media/clipboardImage')>()),
+  // jsdom has no canvas, so the real compressor cannot run in tests.
+  compressImageFile: vi.fn(() => Promise.resolve('data:image/jpeg;base64,compressed')),
+}))
 
 const projects = ['Inbox', 'Personal']
 const fixedNow = () => new Date('2026-08-14T10:00:00.000Z')
@@ -99,6 +105,32 @@ describe('TaskCreateModal', () => {
 
     expect(onCancel).toHaveBeenCalled()
     expect(onCreate).not.toHaveBeenCalled()
+  })
+
+  it('compresses a pasted image instead of inserting it raw', async () => {
+    renderModal({ initialTitle: 'Ship it' })
+    const editor = screen.getByLabelText('Task description')
+    const execCommand = vi.fn()
+    document.execCommand = execCommand
+
+    const file = new File(['raw-bytes'], 'shot.png', { type: 'image/png' })
+    const paste = fireEvent.paste(editor, {
+      clipboardData: { items: [{ kind: 'file', type: 'image/png', getAsFile: () => file }] },
+    })
+
+    expect(paste).toBe(false) // default insertion of the raw image was prevented
+    await waitFor(() => expect(execCommand).toHaveBeenCalledWith('insertImage', false, 'data:image/jpeg;base64,compressed'))
+  })
+
+  it('keeps an image-only description instead of dropping it', async () => {
+    const user = userEvent.setup()
+    const { onCreate } = renderModal({ initialTitle: 'Ship it' })
+
+    const editor = screen.getByLabelText('Task description')
+    editor.innerHTML = '<img src="data:image/jpeg;base64,compressed">'
+    await user.click(screen.getByRole('button', { name: 'Create task' }))
+
+    expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({ note: '<img src="data:image/jpeg;base64,compressed">' }))
   })
 
   it('includes the typed description as sanitized HTML', async () => {

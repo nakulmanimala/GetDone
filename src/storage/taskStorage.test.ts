@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { loadTasks, saveTasks } from './taskStorage'
 import type { Task } from '../domain/tasks'
 
@@ -24,5 +24,21 @@ describe('task storage', () => {
     localStorage.setItem('getdone.tasks.v1', '{not-json')
     const fallback: Task[] = [{ id: 'fallback', title: 'Fallback', status: 'open', project: 'Inbox', priority: 'none', createdAt: '2026-01-01T00:00:00Z' }]
     expect(loadTasks(fallback)).toBe(fallback)
+  })
+
+  it('returns false instead of throwing when storage is full', () => {
+    const setItemSpy = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('Quota exceeded', 'QuotaExceededError')
+    })
+
+    const tasks: Task[] = [{ id: 'a', title: 'Task', status: 'open', project: 'Inbox', priority: 'none', createdAt: '2026-01-01T00:00:00Z' }]
+    expect(saveTasks(tasks)).toBe(false)
+
+    setItemSpy.mockRestore()
+  })
+
+  it('returns true on a successful save', () => {
+    const tasks: Task[] = [{ id: 'a', title: 'Task', status: 'open', project: 'Inbox', priority: 'none', createdAt: '2026-01-01T00:00:00Z' }]
+    expect(saveTasks(tasks)).toBe(true)
   })
 })

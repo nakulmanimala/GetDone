@@ -2,6 +2,12 @@ export type TaskStatus = 'open' | 'completed'
 export type Priority = 'none' | 'low' | 'medium' | 'high'
 export type View = 'inbox' | 'today' | 'upcoming' | 'completed'
 
+export interface TaskImage {
+  id: string
+  dataUrl: string
+  addedAt: string
+}
+
 export interface Task {
   id: string
   title: string
@@ -12,6 +18,7 @@ export interface Task {
   note?: string
   createdAt: string
   completedAt?: string
+  images?: TaskImage[]
 }
 
 export const initialTasks: Task[] = [
@@ -91,6 +98,26 @@ export function deleteTask(tasks: Task[], id: string): Task[] {
 
 export function updateTask(tasks: Task[], updated: Task): Task[] {
   return tasks.map((task) => (task.id === updated.id ? updated : task))
+}
+
+export function addImage(
+  tasks: Task[],
+  taskId: string,
+  dataUrl: string,
+  createId: () => string = defaultId,
+  now: () => Date = defaultNow,
+): Task[] {
+  return tasks.map((task) =>
+    task.id === taskId
+      ? { ...task, images: [...(task.images ?? []), { id: createId(), dataUrl, addedAt: now().toISOString() }] }
+      : task,
+  )
+}
+
+export function removeImage(tasks: Task[], taskId: string, imageId: string): Task[] {
+  return tasks.map((task) =>
+    task.id === taskId ? { ...task, images: (task.images ?? []).filter((image) => image.id !== imageId) } : task,
+  )
 }
 
 export function filterTasks(tasks: Task[], view: View, today = new Date().toISOString().slice(0, 10)): Task[] {

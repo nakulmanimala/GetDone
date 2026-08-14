@@ -25,6 +25,11 @@ export function loadTasks(fallback: Task[]): Task[] {
   }
 }
 
-export function saveTasks(tasks: Task[]): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks))
+export function saveTasks(tasks: Task[]): boolean {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks))
+    return true
+  } catch {
+    return false
+  }
 }

@@ -9,6 +9,7 @@ GetDone is a polished, local-first task-management web app. It runs in any moder
 - Inbox, Today, Upcoming, and Completed views
 - Fast task capture
 - Projects, priorities, due dates, notes, completion, reopening, and deletion
+- Paste an image from the clipboard onto a task to attach it (compressed automatically before storage)
 - Search and responsive task-detail panel
 - Browser-local persistence
 - Responsive desktop and mobile interface

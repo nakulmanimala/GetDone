@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { addTask, completeTask, filterTasks, initialTasks, type Task } from './tasks'
+import { addImage, addTask, completeTask, filterTasks, initialTasks, removeImage, type Task } from './tasks'
 
 describe('task domain', () => {
   it('adds a task to the inbox with safe defaults', () => {
@@ -42,5 +42,74 @@ describe('task domain', () => {
     expect(filterTasks(tasks, 'today', '2026-08-13').map((task) => task.id)).toEqual(['today'])
     expect(filterTasks(tasks, 'upcoming', '2026-08-13').map((task) => task.id)).toEqual(['later'])
     expect(filterTasks(tasks, 'completed', '2026-08-13').map((task) => task.id)).toEqual(['done'])
+  })
+
+  it('attaches a pasted image to the target task without touching others', () => {
+    const tasks: Task[] = [
+      { id: 'a', title: 'One', status: 'open', project: 'Inbox', priority: 'none', createdAt: '2026-01-01T00:00:00Z' },
+      { id: 'b', title: 'Two', status: 'open', project: 'Inbox', priority: 'none', createdAt: '2026-01-01T00:00:00Z' },
+    ]
+
+    const result = addImage(tasks, 'a', 'data:image/jpeg;base64,xyz', () => 'img-1', () => new Date('2026-01-02T00:00:00Z'))
+
+    expect(result[0].images).toEqual([{ id: 'img-1', dataUrl: 'data:image/jpeg;base64,xyz', addedAt: '2026-01-02T00:00:00.000Z' }])
+    expect(result[1]).toBe(tasks[1])
+  })
+
+  it('appends to existing images rather than replacing them', () => {
+    const tasks: Task[] = [
+      {
+        id: 'a',
+        title: 'One',
+        status: 'open',
+        project: 'Inbox',
+        priority: 'none',
+        createdAt: '2026-01-01T00:00:00Z',
+        images: [{ id: 'img-1', dataUrl: 'data:image/jpeg;base64,first', addedAt: '2026-01-01T00:00:00.000Z' }],
+      },
+    ]
+
+    const result = addImage(tasks, 'a', 'data:image/jpeg;base64,second', () => 'img-2', () => new Date('2026-01-02T00:00:00Z'))
+
+    expect(result[0].images?.map((image) => image.id)).toEqual(['img-1', 'img-2'])
+  })
+
+  it('removes an image by id and leaves other images and tasks untouched', () => {
+    const tasks: Task[] = [
+      {
+        id: 'a',
+        title: 'One',
+        status: 'open',
+        project: 'Inbox',
+        priority: 'none',
+        createdAt: '2026-01-01T00:00:00Z',
+        images: [
+          { id: 'img-1', dataUrl: 'data:image/jpeg;base64,first', addedAt: '2026-01-01T00:00:00.000Z' },
+          { id: 'img-2', dataUrl: 'data:image/jpeg;base64,second', addedAt: '2026-01-01T00:00:00.000Z' },
+        ],
+      },
+      { id: 'b', title: 'Two', status: 'open', project: 'Inbox', priority: 'none', createdAt: '2026-01-01T00:00:00Z' },
+    ]
+
+    const result = removeImage(tasks, 'a', 'img-1')
+
+    expect(result[0].images?.map((image) => image.id)).toEqual(['img-2'])
+    expect(result[1]).toBe(tasks[1])
+  })
+
+  it('removeImage is a no-op for an unknown image id', () => {
+    const tasks: Task[] = [
+      {
+        id: 'a',
+        title: 'One',
+        status: 'open',
+        project: 'Inbox',
+        priority: 'none',
+        createdAt: '2026-01-01T00:00:00Z',
+        images: [{ id: 'img-1', dataUrl: 'data:image/jpeg;base64,first', addedAt: '2026-01-01T00:00:00.000Z' }],
+      },
+    ]
+
+    expect(removeImage(tasks, 'a', 'nope').map((task) => task.images)).toEqual(tasks.map((task) => task.images))
   })
 })

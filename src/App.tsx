@@ -18,16 +18,19 @@ import {
 } from 'lucide-react'
 import './App.css'
 import {
+  addImage,
   addTask,
   completeTask,
   deleteTask,
   filterTasks,
   initialTasks,
+  removeImage,
   reopenTask,
   updateTask,
   type Task,
   type View,
 } from './domain/tasks'
+import { compressImageFile, findImageFile } from './media/clipboardImage'
 import { loadTasks, saveTasks } from './storage/taskStorage'
 import { createApiClient } from './sync/apiClient'
 import { SyncPanel } from './sync/SyncPanel'
@@ -72,13 +75,17 @@ function App() {
   const [syncPanelOpen, setSyncPanelOpen] = useState(false)
   const [syncStatus, setSyncStatus] = useState<SyncStatus>({ kind: 'idle' })
   const [cryptoKey, setCryptoKey] = useState<CryptoKey | null>(null)
+  const [storageFull, setStorageFull] = useState(false)
+  const [lightboxImage, setLightboxImage] = useState<string | null>(null)
 
-  useEffect(() => saveTasks(tasks), [tasks])
+  useEffect(() => {
+    setStorageFull(!saveTasks(tasks))
+  }, [tasks])
 
-  function applyLocalChange(next: Task[]) {
+  const applyLocalChange = useCallback((next: Task[]) => {
     setTasks(next)
     touchUpdatedAt()
-  }
+  }, [])
 
   const applyRemoteSnapshot = useCallback((next: Task[], remoteUpdatedAt: string) => {
     setTasks(next)
@@ -93,6 +100,26 @@ function App() {
   useEffect(() => {
     tasksRef.current = tasks
   }, [tasks])
+
+  // Paste an image straight onto the selected task. A window-level listener
+  // (rather than onPaste on the panel) so it fires even when nothing inside
+  // the panel is focused yet — the common "select task, then paste" flow.
+  useEffect(() => {
+    if (!selectedId) return
+    const targetId = selectedId
+
+    function handlePaste(event: ClipboardEvent) {
+      const file = findImageFile(event.clipboardData?.items)
+      if (!file) return
+      event.preventDefault()
+      compressImageFile(file)
+        .then((dataUrl) => applyLocalChange(addImage(tasksRef.current, targetId, dataUrl)))
+        .catch(() => {})
+    }
+
+    window.addEventListener('paste', handlePaste)
+    return () => window.removeEventListener('paste', handlePaste)
+  }, [selectedId, applyLocalChange])
 
   const runAutoSync = useCallback(async () => {
     if (!cryptoKey) return
@@ -201,6 +228,12 @@ function App() {
         </header>
 
         <section className="content">
+          {storageFull && (
+            <div className="storage-warning">
+              Local storage is full — new changes (including images) may not be saved. Remove some images to free up space.
+            </div>
+          )}
+
           <div className="page-heading">
             <div><p>{today}</p><h1>{viewLabels[view]}</h1><span>{visibleTasks.length} {visibleTasks.length === 1 ? 'task' : 'tasks'} in this view</span></div>
             <button className="focus-button"><Sparkles size={16} /> Focus mode</button>
@@ -236,6 +269,22 @@ function App() {
           <label>Due date<input type="date" value={selected.dueDate ?? ''} onChange={(event) => applyLocalChange(updateTask(tasks, { ...selected, dueDate: event.target.value || undefined }))} /></label>
           <label>Priority<select value={selected.priority} onChange={(event) => applyLocalChange(updateTask(tasks, { ...selected, priority: event.target.value as Task['priority'] }))}><option value="none">None</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></label>
           <label>Notes<textarea className="note-editor" value={selected.note ?? ''} placeholder="Add notes…" onChange={(event) => applyLocalChange(updateTask(tasks, { ...selected, note: event.target.value }))} /></label>
+
+          <div className="image-section">
+            <div className="image-section-label">Images{selected.images?.length ? <span>{selected.images.length}</span> : null}</div>
+            {selected.images?.length ? (
+              <div className="image-grid">
+                {selected.images.map((image) => (
+                  <div key={image.id} className="image-thumb">
+                    <img src={image.dataUrl} alt="" onClick={() => setLightboxImage(image.dataUrl)} />
+                    <button className="image-remove" onClick={() => applyLocalChange(removeImage(tasks, selected.id, image.id))} aria-label="Remove image"><X size={12} /></button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="sync-hint">Paste an image (⌘V) to attach it here.</p>
+            )}
+          </div>
         </div>
         <div className="detail-footer"><button className="delete-button" onClick={() => { applyLocalChange(deleteTask(tasks, selected.id)); setSelectedId(null) }}><Trash2 size={15} /> Delete task</button></div>
       </aside>}
@@ -250,6 +299,12 @@ function App() {
           onUnlock={setCryptoKey}
           onClose={() => setSyncPanelOpen(false)}
         />
+      )}
+
+      {lightboxImage && (
+        <button className="lightbox" aria-label="Close image preview" onClick={() => setLightboxImage(null)}>
+          <img src={lightboxImage} alt="" />
+        </button>
       )}
     </div>
   )

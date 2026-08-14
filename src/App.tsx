@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type FormEvent } from 'react'
 import {
   Bell,
   Check,
@@ -24,6 +24,7 @@ import {
   createTask,
   deleteTask,
   initialTasks,
+  moveTask,
   removeImage,
   reopenTask,
   updateTask,
@@ -75,6 +76,8 @@ function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [composerOpen, setComposerOpen] = useState(false)
   const [composerProject, setComposerProject] = useState<string | undefined>(undefined)
+  const [draggingId, setDraggingId] = useState<string | null>(null)
+  const [dropTarget, setDropTarget] = useState<string | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [syncPanelOpen, setSyncPanelOpen] = useState(false)
   const [syncStatus, setSyncStatus] = useState<SyncStatus>({ kind: 'idle' })
@@ -232,6 +235,30 @@ function App() {
     applyLocalChange(task.status === 'completed' ? reopenTask(tasks, task.id) : completeTask(tasks, task.id))
   }
 
+  function handleColumnDragOver(event: DragEvent, project: string) {
+    // draggingId can lag one render behind the dragstart, so also accept the
+    // payload type our rows set; external drags (files, images) carry neither.
+    if (!draggingId && !event.dataTransfer.types.includes('text/plain')) return
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'move'
+    setDropTarget(project)
+  }
+
+  function handleColumnDragLeave(event: DragEvent, project: string) {
+    // dragleave also fires when entering a child of the column; only clear
+    // the highlight when the pointer truly left the column.
+    if (event.currentTarget.contains(event.relatedTarget as Node)) return
+    setDropTarget((current) => (current === project ? null : current))
+  }
+
+  function handleColumnDrop(event: DragEvent, project: string) {
+    event.preventDefault()
+    const id = event.dataTransfer.getData('text/plain') || draggingId
+    if (id) applyLocalChange(moveTask(tasks, id, project))
+    setDraggingId(null)
+    setDropTarget(null)
+  }
+
   function chooseBoardView(next: 'all' | 'starred') {
     setBoardView(next)
     setSelectedId(null)
@@ -247,7 +274,17 @@ function App() {
   const syncStatusView = describeSyncStatus(syncStatus, syncConfigured)
 
   const renderRow = (task: Task) => (
-    <article key={task.id} className={`board-row ${selectedId === task.id ? 'selected' : ''}`} onClick={() => { setSelectedId(task.id); setSyncPanelOpen(false) }}>
+    <article
+      key={task.id}
+      className={`board-row ${selectedId === task.id ? 'selected' : ''} ${draggingId === task.id ? 'dragging' : ''}`}
+      draggable={boardView === 'all'}
+      onDragStart={(event) => {
+        event.dataTransfer.setData('text/plain', task.id)
+        event.dataTransfer.effectAllowed = 'move'
+        setDraggingId(task.id)
+      }}
+      onDragEnd={() => { setDraggingId(null); setDropTarget(null) }}
+      onClick={() => { setSelectedId(task.id); setSyncPanelOpen(false) }}>
       <button className={`complete-button priority-${task.priority}`} onClick={(event) => { event.stopPropagation(); toggleComplete(task) }} aria-label={task.status === 'completed' ? `Reopen ${task.title}` : `Complete ${task.title}`}>
         {task.status === 'completed' ? <Check size={14} /> : <Circle size={16} />}
       </button>
@@ -345,7 +382,13 @@ function App() {
 
           <div className="board">
             {boardColumns.map((column) => (
-              <div className="board-column" key={column.name}>
+              <div
+                className={`board-column ${dropTarget === column.name && boardView === 'all' ? 'drop-target' : ''}`}
+                key={column.name}
+                onDragOver={boardView === 'all' ? (event) => handleColumnDragOver(event, column.name) : undefined}
+                onDragLeave={boardView === 'all' ? (event) => handleColumnDragLeave(event, column.name) : undefined}
+                onDrop={boardView === 'all' ? (event) => handleColumnDrop(event, column.name) : undefined}
+              >
                 <div className="column-head">
                   <h2>{column.name}</h2>
                   {boardView === 'all' && <span className="column-dot" style={{ background: projectColor(column.name) }} />}

@@ -129,6 +129,11 @@ export function updateTask(tasks: Task[], updated: Task): Task[] {
   return tasks.map((task) => (task.id === updated.id ? updated : task))
 }
 
+export function moveTask(tasks: Task[], id: string, project: string): Task[] {
+  if (!tasks.some((task) => task.id === id && task.project !== project)) return tasks
+  return tasks.map((task) => (task.id === id ? { ...task, project } : task))
+}
+
 export function addImage(
   tasks: Task[],
   taskId: string,

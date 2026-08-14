@@ -50,6 +50,8 @@ kbd { margin-left:auto; padding:2px 5px; color:var(--faint); background:rgba(255
 .column-tasks { overflow-y:auto; }
 .board-row { display:flex; align-items:flex-start; gap:10px; padding:10px 12px 10px 14px; border-top:1px solid var(--border); cursor:pointer; transition:background .15s; }
 .board-row:hover,.board-row.selected { background:rgba(255,255,255,.03); }
+.board-row.dragging { opacity:.35; }
+.board-column.drop-target { border-color:rgba(130,143,255,.55); background:#14151d; box-shadow:0 0 0 1px rgba(130,143,255,.35); }
 .board-copy { flex:1; min-width:0; }
 .board-copy h4 { overflow:hidden; margin:1px 0 0; color:#e8e9ea; font-size:13px; font-weight:500; letter-spacing:-.1px; text-overflow:ellipsis; white-space:nowrap; }
 .board-copy h4.done { color:var(--faint); text-decoration:line-through; }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { addImage, addTask, completeTask, createTask, filterTasks, initialTasks, removeImage, type Task } from './tasks'
+import { addImage, addTask, completeTask, createTask, filterTasks, initialTasks, moveTask, removeImage, type Task } from './tasks'
 
 describe('task domain', () => {
   it('adds a task to the inbox with safe defaults', () => {
@@ -60,6 +60,27 @@ describe('task domain', () => {
   it('omits the flagged field when the flag is off', () => {
     const tasks = createTask([], { title: 'Plain', flagged: false }, () => 'task-1')
     expect(tasks[0].flagged).toBeUndefined()
+  })
+
+  it('moves a task to another list without touching other tasks', () => {
+    const tasks: Task[] = [
+      { id: 'a', title: 'One', status: 'open', project: 'Inbox', priority: 'none', createdAt: '2026-01-01T00:00:00Z' },
+      { id: 'b', title: 'Two', status: 'open', project: 'Inbox', priority: 'none', createdAt: '2026-01-01T00:00:00Z' },
+    ]
+
+    const result = moveTask(tasks, 'a', 'Backlog')
+
+    expect(result[0]).toMatchObject({ id: 'a', project: 'Backlog' })
+    expect(result[1]).toBe(tasks[1])
+  })
+
+  it('moveTask is a no-op for the same list or an unknown task', () => {
+    const tasks: Task[] = [
+      { id: 'a', title: 'One', status: 'open', project: 'Inbox', priority: 'none', createdAt: '2026-01-01T00:00:00Z' },
+    ]
+
+    expect(moveTask(tasks, 'a', 'Inbox')).toBe(tasks)
+    expect(moveTask(tasks, 'nope', 'Backlog')).toBe(tasks)
   })
 
   it('marks a task complete without changing the other tasks', () => {

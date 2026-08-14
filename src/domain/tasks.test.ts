@@ -12,6 +12,7 @@ import {
   moveTask,
   purgeTask,
   removeImage,
+  reorderTask,
   restoreTask,
   type Task,
 } from './tasks'
@@ -130,6 +131,24 @@ describe('task domain', () => {
 
     expect(result[0]).toMatchObject({ id: 'a', project: 'Backlog' })
     expect(result[1]).toBe(tasks[1])
+  })
+
+  it('reorders a task before or after a target in display order', () => {
+    const tasks = [openTask('a'), openTask('b'), openTask('c')]
+
+    expect(reorderTask(tasks, 'c', 'a', 'before').map((task) => task.id)).toEqual(['c', 'a', 'b'])
+    expect(reorderTask(tasks, 'a', 'c', 'after').map((task) => task.id)).toEqual(['b', 'c', 'a'])
+    expect(reorderTask(tasks, 'a', 'a', 'before')).toBe(tasks)
+    expect(reorderTask(tasks, 'a', 'nope', 'before')).toBe(tasks)
+  })
+
+  it('reordering across lists adopts the target list', () => {
+    const tasks = [openTask('a', 'Inbox'), openTask('b', 'Backlog')]
+
+    const result = reorderTask(tasks, 'a', 'b', 'after')
+
+    expect(result.map((task) => task.id)).toEqual(['b', 'a'])
+    expect(result[1].project).toBe('Backlog')
   })
 
   it('moveTask is a no-op for the same list or an unknown task', () => {

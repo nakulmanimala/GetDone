@@ -156,6 +156,21 @@ export function moveTask(tasks: Task[], id: string, project: string): Task[] {
   return tasks.map((task) => (task.id === id ? { ...task, project } : task))
 }
 
+// Drop a task next to another one: it takes the position before/after the
+// target in the array (which is the board's display order) and joins the
+// target's list when dragged across columns.
+export function reorderTask(tasks: Task[], id: string, targetId: string, edge: 'before' | 'after'): Task[] {
+  if (id === targetId) return tasks
+  const moving = tasks.find((task) => task.id === id)
+  const target = tasks.find((task) => task.id === targetId)
+  if (!moving || !target) return tasks
+
+  const without = tasks.filter((task) => task.id !== id)
+  const insertAt = without.findIndex((task) => task.id === targetId) + (edge === 'after' ? 1 : 0)
+  const moved = moving.project === target.project ? moving : { ...moving, project: target.project }
+  return [...without.slice(0, insertAt), moved, ...without.slice(insertAt)]
+}
+
 export function addImage(
   tasks: Task[],
   taskId: string,

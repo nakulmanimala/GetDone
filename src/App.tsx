@@ -33,6 +33,7 @@ import {
   purgeTask,
   removeImage,
   reopenTask,
+  reorderTask,
   restoreTask,
   updateTask,
   type Task,
@@ -93,6 +94,8 @@ function App() {
   const [composerProject, setComposerProject] = useState<string | undefined>(undefined)
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const [dropTarget, setDropTarget] = useState<string | null>(null)
+  const [rowDrop, setRowDrop] = useState<{ id: string; edge: 'before' | 'after' } | null>(null)
+  const expandedCardRef = useRef<HTMLElement | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [syncPanelOpen, setSyncPanelOpen] = useState(false)
   const [syncStatus, setSyncStatus] = useState<SyncStatus>({ kind: 'idle' })
@@ -174,6 +177,26 @@ function App() {
     // Periodic re-check catches remote-only changes (e.g. another device),
     // deliberately not re-armed on every task edit — see tasksRef above.
   }, [syncConfigured, runAutoSync])
+
+  // Google Tasks behavior: clicking anywhere outside the expanded card
+  // collapses it. Overlays (create modal, confirm dialog, lightbox, sync
+  // panel) don't count as "outside".
+  useEffect(() => {
+    if (!selectedId) return
+    function handlePointerDown(event: PointerEvent) {
+      const target = event.target as Element | null
+      if (!target) return
+      if (expandedCardRef.current?.contains(target)) return
+      if (target.closest('.modal-overlay, .detail-panel, .lightbox')) return
+      // Another task row handles its own click (switching the expansion to
+      // itself); collapsing here would shift the layout before that click
+      // lands and swallow it.
+      if (target.closest('.board-row')) return
+      setSelectedId(null)
+    }
+    document.addEventListener('pointerdown', handlePointerDown)
+    return () => document.removeEventListener('pointerdown', handlePointerDown)
+  }, [selectedId])
 
   const matchesQuery = useCallback(
     (task: Task) => {
@@ -321,6 +344,28 @@ function App() {
     if (id) applyLocalChange(moveTask(tasks, id, project))
     setDraggingId(null)
     setDropTarget(null)
+    setRowDrop(null)
+  }
+
+  function handleRowDragOver(event: DragEvent, task: Task) {
+    if (!draggingId && !event.dataTransfer.types.includes('text/plain')) return
+    if (draggingId === task.id) return
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'move'
+    const rect = event.currentTarget.getBoundingClientRect()
+    const edge: 'before' | 'after' = event.clientY < rect.top + rect.height / 2 ? 'before' : 'after'
+    setRowDrop((current) => (current?.id === task.id && current.edge === edge ? current : { id: task.id, edge }))
+  }
+
+  function handleRowDrop(event: DragEvent, task: Task) {
+    event.preventDefault()
+    event.stopPropagation() // the column's own drop handler must not also fire
+    const id = event.dataTransfer.getData('text/plain') || draggingId
+    const edge = rowDrop?.id === task.id ? rowDrop.edge : 'before'
+    if (id && id !== task.id) applyLocalChange(reorderTask(tasks, id, task.id, edge))
+    setDraggingId(null)
+    setDropTarget(null)
+    setRowDrop(null)
   }
 
   function chooseBoardView(next: 'all' | 'starred' | 'trash') {
@@ -342,7 +387,7 @@ function App() {
   const renderExpandedRow = (task: Task) => {
     const patch = (changes: Partial<Task>) => applyLocalChange(updateTask(tasks, { ...task, ...changes }))
     return (
-      <article key={task.id} className="board-row board-editor">
+      <article key={task.id} className="board-row board-editor" ref={(element) => { expandedCardRef.current = element }}>
         <div className="editor-head">
           <button className={`complete-button priority-${task.priority}`} onClick={() => toggleComplete(task)} aria-label={task.status === 'completed' ? `Reopen ${task.title}` : `Complete ${task.title}`}>
             {task.status === 'completed' ? <Check size={14} /> : <Circle size={16} />}
@@ -374,28 +419,8 @@ function App() {
         />
 
         <div className="editor-grid">
-          <label>List
-            <select value={task.project} onChange={(event) => patch({ project: event.target.value })}>
-              {projects.map((project) => <option key={project}>{project}</option>)}
-            </select>
-          </label>
           <label>Due date
             <input type="date" value={task.dueDate ?? ''} onChange={(event) => patch({ dueDate: event.target.value || undefined })} />
-          </label>
-          <label>Reminder
-            <input
-              type="datetime-local"
-              value={isoToLocalInput(task.reminderAt)}
-              onChange={(event) => patch({ reminderAt: event.target.value ? new Date(event.target.value).toISOString() : undefined })}
-            />
-          </label>
-          <label>Repeat
-            <select value={task.repeat ?? 'none'} onChange={(event) => patch({ repeat: event.target.value === 'none' ? undefined : (event.target.value as Task['repeat']) })}>
-              <option value="none">Doesn't repeat</option>
-              <option value="daily">Daily</option>
-              <option value="weekly">Weekly</option>
-              <option value="monthly">Monthly</option>
-            </select>
           </label>
           <label>Priority
             <select value={task.priority} onChange={(event) => patch({ priority: event.target.value as Task['priority'] })}>
@@ -403,6 +428,21 @@ function App() {
               <option value="low">Low</option>
               <option value="medium">Medium</option>
               <option value="high">High</option>
+            </select>
+          </label>
+          <label className="editor-wide">Reminder
+            <input
+              type="datetime-local"
+              value={isoToLocalInput(task.reminderAt)}
+              onChange={(event) => patch({ reminderAt: event.target.value ? new Date(event.target.value).toISOString() : undefined })}
+            />
+          </label>
+          <label className="editor-wide">Repeat
+            <select value={task.repeat ?? 'none'} onChange={(event) => patch({ repeat: event.target.value === 'none' ? undefined : (event.target.value as Task['repeat']) })}>
+              <option value="none">Doesn't repeat</option>
+              <option value="daily">Daily</option>
+              <option value="weekly">Weekly</option>
+              <option value="monthly">Monthly</option>
             </select>
           </label>
         </div>
@@ -428,14 +468,17 @@ function App() {
   const renderRow = (task: Task) => (selectedId === task.id && boardView !== 'trash' ? renderExpandedRow(task) : (
     <article
       key={task.id}
-      className={`board-row ${draggingId === task.id ? 'dragging' : ''}`}
+      className={`board-row ${draggingId === task.id ? 'dragging' : ''} ${rowDrop?.id === task.id ? (rowDrop.edge === 'before' ? 'drop-above' : 'drop-below') : ''}`}
       draggable={boardView === 'all'}
       onDragStart={(event) => {
         event.dataTransfer.setData('text/plain', task.id)
         event.dataTransfer.effectAllowed = 'move'
         setDraggingId(task.id)
       }}
-      onDragEnd={() => { setDraggingId(null); setDropTarget(null) }}
+      onDragEnd={() => { setDraggingId(null); setDropTarget(null); setRowDrop(null) }}
+      onDragOver={boardView === 'all' ? (event) => handleRowDragOver(event, task) : undefined}
+      onDragLeave={() => setRowDrop((current) => (current?.id === task.id ? null : current))}
+      onDrop={boardView === 'all' ? (event) => handleRowDrop(event, task) : undefined}
       onClick={() => { setSelectedId(task.id); setSyncPanelOpen(false) }}>
       <button className={`complete-button priority-${task.priority}`} onClick={(event) => { event.stopPropagation(); toggleComplete(task) }} aria-label={task.status === 'completed' ? `Reopen ${task.title}` : `Complete ${task.title}`}>
         {task.status === 'completed' ? <Check size={14} /> : <Circle size={16} />}

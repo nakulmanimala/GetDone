@@ -95,6 +95,10 @@ function App() {
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const [dropTarget, setDropTarget] = useState<string | null>(null)
   const [rowDrop, setRowDrop] = useState<{ id: string; edge: 'before' | 'after' } | null>(null)
+  // openId lags selectedId by one frame so the reveal transitions from 0fr;
+  // closingId keeps a collapsing card's body mounted while it shrinks.
+  const [openId, setOpenId] = useState<string | null>(null)
+  const [closingId, setClosingId] = useState<string | null>(null)
   const expandedCardRef = useRef<HTMLElement | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [syncPanelOpen, setSyncPanelOpen] = useState(false)
@@ -178,6 +182,32 @@ function App() {
     // deliberately not re-armed on every task edit — see tasksRef above.
   }, [syncConfigured, runAutoSync])
 
+  // Change selection only through this helper: marking the outgoing card as
+  // "closing" in the same batched update keeps its reveal mounted at full
+  // height, so the shrink transition has a starting point.
+  const selectTask = useCallback((next: string | null) => {
+    setSelectedId((previous) => {
+      if (previous && previous !== next) setClosingId(previous)
+      return next
+    })
+  }, [])
+
+  useEffect(() => {
+    if (!selectedId) {
+      setOpenId(null)
+      return
+    }
+    const frame = requestAnimationFrame(() => setOpenId(selectedId))
+    return () => cancelAnimationFrame(frame)
+  }, [selectedId])
+
+  // Safety net: unmount the closing body even if transitionend never fires.
+  useEffect(() => {
+    if (!closingId) return
+    const timer = setTimeout(() => setClosingId(null), 450)
+    return () => clearTimeout(timer)
+  }, [closingId])
+
   // Google Tasks behavior: clicking anywhere outside the expanded card
   // collapses it. Overlays (create modal, confirm dialog, lightbox, sync
   // panel) don't count as "outside".
@@ -192,7 +222,7 @@ function App() {
       // itself); collapsing here would shift the layout before that click
       // lands and swallow it.
       if (target.closest('.board-row')) return
-      setSelectedId(null)
+      selectTask(null)
     }
     document.addEventListener('pointerdown', handlePointerDown)
     return () => document.removeEventListener('pointerdown', handlePointerDown)
@@ -370,147 +400,168 @@ function App() {
 
   function chooseBoardView(next: 'all' | 'starred' | 'trash') {
     setBoardView(next)
-    setSelectedId(null)
+    selectTask(null)
     setSidebarOpen(false)
   }
 
   function openSyncPanel() {
-    setSelectedId(null)
+    selectTask(null)
     setSyncPanelOpen(true)
     setSidebarOpen(false)
   }
 
   const syncStatusView = describeSyncStatus(syncStatus, syncConfigured)
 
-  // Google Tasks-style in-place editing: the expanded row swaps to a full
-  // inline editor inside the column; every field saves as it changes.
-  const renderExpandedRow = (task: Task) => {
+  // Google Tasks-style in-place editing: the expanded row grows into a full
+  // inline editor inside the column; every field saves as it changes. The
+  // editor body sits in a grid-rows reveal so expand/collapse animates
+  // smoothly — a collapsing card stays mounted (closingId) until its
+  // shrink transition finishes.
+  const renderRow = (task: Task) => {
+    const isExpanded = selectedId === task.id && boardView !== 'trash'
+    const showBody = isExpanded || closingId === task.id
     const patch = (changes: Partial<Task>) => applyLocalChange(updateTask(tasks, { ...task, ...changes }))
     return (
-      <article key={task.id} className="board-row board-editor" ref={(element) => { expandedCardRef.current = element }}>
-        <div className="editor-head">
-          <button className={`complete-button priority-${task.priority}`} onClick={() => toggleComplete(task)} aria-label={task.status === 'completed' ? `Reopen ${task.title}` : `Complete ${task.title}`}>
-            {task.status === 'completed' ? <Check size={14} /> : <Circle size={16} />}
-          </button>
-          <input
-            className="editor-title"
-            value={task.title}
-            onChange={(event) => patch({ title: event.target.value })}
-            aria-label="Task title"
-          />
-          <button className="row-delete" onClick={() => trashTask(task)} aria-label={`Move ${task.title} to the bin`}><Trash2 size={14} /></button>
-          <button
-            className={`star-button ${task.flagged ? 'starred' : ''}`}
-            onClick={() => toggleStar(task)}
-            aria-label={task.flagged ? `Unstar ${task.title}` : `Star ${task.title}`}
-          >
-            <Star size={15} />
-          </button>
-          <button className="star-button" onClick={() => setSelectedId(null)} aria-label="Collapse task"><ChevronUp size={16} /></button>
-        </div>
-
-        <RichNoteEditor
-          key={task.id}
-          initialHtml={task.note ?? ''}
-          placeholder="Details"
-          ariaLabel="Task details"
-          className="note-editor rich-note editor-notes"
-          onChange={(html) => patch({ note: html || undefined })}
-        />
-
-        <div className="editor-grid">
-          <label>Due date
-            <input type="date" value={task.dueDate ?? ''} onChange={(event) => patch({ dueDate: event.target.value || undefined })} />
-          </label>
-          <label>Priority
-            <select value={task.priority} onChange={(event) => patch({ priority: event.target.value as Task['priority'] })}>
-              <option value="none">None</option>
-              <option value="low">Low</option>
-              <option value="medium">Medium</option>
-              <option value="high">High</option>
-            </select>
-          </label>
-          <label className="editor-wide">Reminder
+      <article
+        key={task.id}
+        ref={isExpanded ? (element) => { expandedCardRef.current = element } : undefined}
+        className={`board-row ${isExpanded ? 'board-editor' : ''} ${isExpanded && openId === task.id ? 'open' : ''} ${draggingId === task.id ? 'dragging' : ''} ${rowDrop?.id === task.id ? (rowDrop.edge === 'before' ? 'drop-above' : 'drop-below') : ''}`}
+        draggable={boardView === 'all' && !isExpanded}
+        onDragStart={(event) => {
+          event.dataTransfer.setData('text/plain', task.id)
+          event.dataTransfer.effectAllowed = 'move'
+          setDraggingId(task.id)
+        }}
+        onDragEnd={() => { setDraggingId(null); setDropTarget(null); setRowDrop(null) }}
+        onDragOver={boardView === 'all' && !isExpanded ? (event) => handleRowDragOver(event, task) : undefined}
+        onDragLeave={() => setRowDrop((current) => (current?.id === task.id ? null : current))}
+        onDrop={boardView === 'all' && !isExpanded ? (event) => handleRowDrop(event, task) : undefined}
+      >
+        {isExpanded ? (
+          <div className="editor-head">
+            <button className={`complete-button priority-${task.priority}`} onClick={() => toggleComplete(task)} aria-label={task.status === 'completed' ? `Reopen ${task.title}` : `Complete ${task.title}`}>
+              {task.status === 'completed' ? <Check size={14} /> : <Circle size={16} />}
+            </button>
             <input
-              type="datetime-local"
-              value={isoToLocalInput(task.reminderAt)}
-              onChange={(event) => patch({ reminderAt: event.target.value ? new Date(event.target.value).toISOString() : undefined })}
+              className="editor-title"
+              value={task.title}
+              onChange={(event) => patch({ title: event.target.value })}
+              aria-label="Task title"
             />
-          </label>
-          <label className="editor-wide">Repeat
-            <select value={task.repeat ?? 'none'} onChange={(event) => patch({ repeat: event.target.value === 'none' ? undefined : (event.target.value as Task['repeat']) })}>
-              <option value="none">Doesn't repeat</option>
-              <option value="daily">Daily</option>
-              <option value="weekly">Weekly</option>
-              <option value="monthly">Monthly</option>
-            </select>
-          </label>
-        </div>
-
-        <div className="editor-images">
-          {task.images?.length ? (
-            <div className="image-grid">
-              {task.images.map((image) => (
-                <div key={image.id} className="image-thumb">
-                  <img src={image.dataUrl} alt="" onClick={() => setLightboxImage(image.dataUrl)} />
-                  <button className="image-remove" onClick={() => applyLocalChange(removeImage(tasks, task.id, image.id))} aria-label="Remove image"><X size={12} /></button>
+            <button className="row-delete" onClick={() => trashTask(task)} aria-label={`Move ${task.title} to the bin`}><Trash2 size={14} /></button>
+            <button
+              className={`star-button ${task.flagged ? 'starred' : ''}`}
+              onClick={() => toggleStar(task)}
+              aria-label={task.flagged ? `Unstar ${task.title}` : `Star ${task.title}`}
+            >
+              <Star size={15} />
+            </button>
+            <button className="star-button" onClick={() => selectTask(null)} aria-label="Collapse task"><ChevronUp size={16} /></button>
+          </div>
+        ) : (
+          <div className="row-main" onClick={() => { selectTask(task.id); setSyncPanelOpen(false) }}>
+            <button className={`complete-button priority-${task.priority}`} onClick={(event) => { event.stopPropagation(); toggleComplete(task) }} aria-label={task.status === 'completed' ? `Reopen ${task.title}` : `Complete ${task.title}`}>
+              {task.status === 'completed' ? <Check size={14} /> : <Circle size={16} />}
+            </button>
+            <div className="board-copy">
+              <h4 className={task.status === 'completed' ? 'done' : ''}>{task.title}</h4>
+              {task.note && <p>{stripHtml(task.note)}</p>}
+              {(task.dueDate || task.repeat || task.reminderAt || task.priority !== 'none') && (
+                <div className="board-chips">
+                  {task.dueDate && <span className="due-chip">{formatDueDate(task.dueDate)}</span>}
+                  {task.repeat && <span className="due-chip"><RepeatIcon size={11} /></span>}
+                  {task.reminderAt && <span className="due-chip"><Bell size={11} /></span>}
+                  {task.priority !== 'none' && <span className={`priority-label ${task.priority}`}>{task.priority}</span>}
                 </div>
-              ))}
+              )}
             </div>
-          ) : (
-            <p className="sync-hint">Paste an image (⌘V) to attach it here.</p>
-          )}
-        </div>
+            <button
+              className="row-delete"
+              onClick={(event) => { event.stopPropagation(); trashTask(task) }}
+              aria-label={`Move ${task.title} to the bin`}
+            >
+              <Trash2 size={14} />
+            </button>
+            <button
+              className={`star-button ${task.flagged ? 'starred' : ''}`}
+              onClick={(event) => { event.stopPropagation(); toggleStar(task) }}
+              aria-label={task.flagged ? `Unstar ${task.title}` : `Star ${task.title}`}
+            >
+              <Star size={15} />
+            </button>
+          </div>
+        )}
+
+        {showBody && (
+          <div
+            className="editor-reveal"
+            onTransitionEnd={(event) => {
+              // Child transitions bubble here too; only the reveal's own
+              // grid-rows transition should unmount the closing body.
+              if (event.target === event.currentTarget) setClosingId((current) => (current === task.id ? null : current))
+            }}
+          >
+            <div className="editor-reveal-inner">
+              <div className="editor-body">
+                <RichNoteEditor
+                  key={task.id}
+                  initialHtml={task.note ?? ''}
+                  placeholder="Details"
+                  ariaLabel="Task details"
+                  className="note-editor rich-note editor-notes"
+                  onChange={(html) => patch({ note: html || undefined })}
+                />
+
+                <div className="editor-grid">
+                  <label>Due date
+                    <input type="date" value={task.dueDate ?? ''} onChange={(event) => patch({ dueDate: event.target.value || undefined })} />
+                  </label>
+                  <label>Priority
+                    <select value={task.priority} onChange={(event) => patch({ priority: event.target.value as Task['priority'] })}>
+                      <option value="none">None</option>
+                      <option value="low">Low</option>
+                      <option value="medium">Medium</option>
+                      <option value="high">High</option>
+                    </select>
+                  </label>
+                  <label className="editor-wide">Reminder
+                    <input
+                      type="datetime-local"
+                      value={isoToLocalInput(task.reminderAt)}
+                      onChange={(event) => patch({ reminderAt: event.target.value ? new Date(event.target.value).toISOString() : undefined })}
+                    />
+                  </label>
+                  <label className="editor-wide">Repeat
+                    <select value={task.repeat ?? 'none'} onChange={(event) => patch({ repeat: event.target.value === 'none' ? undefined : (event.target.value as Task['repeat']) })}>
+                      <option value="none">Doesn't repeat</option>
+                      <option value="daily">Daily</option>
+                      <option value="weekly">Weekly</option>
+                      <option value="monthly">Monthly</option>
+                    </select>
+                  </label>
+                </div>
+
+                <div className="editor-images">
+                  {task.images?.length ? (
+                    <div className="image-grid">
+                      {task.images.map((image) => (
+                        <div key={image.id} className="image-thumb">
+                          <img src={image.dataUrl} alt="" onClick={() => setLightboxImage(image.dataUrl)} />
+                          <button className="image-remove" onClick={() => applyLocalChange(removeImage(tasks, task.id, image.id))} aria-label="Remove image"><X size={12} /></button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="sync-hint">Paste an image (⌘V) to attach it here.</p>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </article>
     )
   }
-
-  const renderRow = (task: Task) => (selectedId === task.id && boardView !== 'trash' ? renderExpandedRow(task) : (
-    <article
-      key={task.id}
-      className={`board-row ${draggingId === task.id ? 'dragging' : ''} ${rowDrop?.id === task.id ? (rowDrop.edge === 'before' ? 'drop-above' : 'drop-below') : ''}`}
-      draggable={boardView === 'all'}
-      onDragStart={(event) => {
-        event.dataTransfer.setData('text/plain', task.id)
-        event.dataTransfer.effectAllowed = 'move'
-        setDraggingId(task.id)
-      }}
-      onDragEnd={() => { setDraggingId(null); setDropTarget(null); setRowDrop(null) }}
-      onDragOver={boardView === 'all' ? (event) => handleRowDragOver(event, task) : undefined}
-      onDragLeave={() => setRowDrop((current) => (current?.id === task.id ? null : current))}
-      onDrop={boardView === 'all' ? (event) => handleRowDrop(event, task) : undefined}
-      onClick={() => { setSelectedId(task.id); setSyncPanelOpen(false) }}>
-      <button className={`complete-button priority-${task.priority}`} onClick={(event) => { event.stopPropagation(); toggleComplete(task) }} aria-label={task.status === 'completed' ? `Reopen ${task.title}` : `Complete ${task.title}`}>
-        {task.status === 'completed' ? <Check size={14} /> : <Circle size={16} />}
-      </button>
-      <div className="board-copy">
-        <h4 className={task.status === 'completed' ? 'done' : ''}>{task.title}</h4>
-        {task.note && <p>{stripHtml(task.note)}</p>}
-        {(task.dueDate || task.repeat || task.reminderAt || task.priority !== 'none') && (
-          <div className="board-chips">
-            {task.dueDate && <span className="due-chip">{formatDueDate(task.dueDate)}</span>}
-            {task.repeat && <span className="due-chip"><RepeatIcon size={11} /></span>}
-            {task.reminderAt && <span className="due-chip"><Bell size={11} /></span>}
-            {task.priority !== 'none' && <span className={`priority-label ${task.priority}`}>{task.priority}</span>}
-          </div>
-        )}
-      </div>
-      <button
-        className="row-delete"
-        onClick={(event) => { event.stopPropagation(); trashTask(task) }}
-        aria-label={`Move ${task.title} to the bin`}
-      >
-        <Trash2 size={14} />
-      </button>
-      <button
-        className={`star-button ${task.flagged ? 'starred' : ''}`}
-        onClick={(event) => { event.stopPropagation(); toggleStar(task) }}
-        aria-label={task.flagged ? `Unstar ${task.title}` : `Star ${task.title}`}
-      >
-        <Star size={15} />
-      </button>
-    </article>
-  ))
 
   const renderTrashRow = (task: Task) => (
     <article key={task.id} className="board-row trash-row">

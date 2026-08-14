@@ -1,6 +1,7 @@
 export type TaskStatus = 'open' | 'completed'
 export type Priority = 'none' | 'low' | 'medium' | 'high'
 export type View = 'inbox' | 'today' | 'upcoming' | 'completed'
+export type Repeat = 'daily' | 'weekly' | 'monthly'
 
 export interface TaskImage {
   id: string
@@ -16,9 +17,23 @@ export interface Task {
   priority: Priority
   dueDate?: string
   note?: string
+  reminderAt?: string
+  repeat?: Repeat
+  flagged?: boolean
   createdAt: string
   completedAt?: string
   images?: TaskImage[]
+}
+
+export interface TaskDraft {
+  title: string
+  note?: string
+  project?: string
+  priority?: Priority
+  dueDate?: string
+  reminderAt?: string
+  repeat?: Repeat
+  flagged?: boolean
 }
 
 export const initialTasks: Task[] = [
@@ -62,7 +77,16 @@ export function addTask(
   createId: () => string = defaultId,
   now: () => Date = defaultNow,
 ): Task[] {
-  const title = rawTitle.trim()
+  return createTask(tasks, { title: rawTitle }, createId, now)
+}
+
+export function createTask(
+  tasks: Task[],
+  draft: TaskDraft,
+  createId: () => string = defaultId,
+  now: () => Date = defaultNow,
+): Task[] {
+  const title = draft.title.trim()
   if (!title) return tasks
 
   return [
@@ -70,8 +94,13 @@ export function addTask(
       id: createId(),
       title,
       status: 'open',
-      project: 'Inbox',
-      priority: 'none',
+      project: draft.project ?? 'Inbox',
+      priority: draft.priority ?? 'none',
+      dueDate: draft.dueDate,
+      note: draft.note,
+      reminderAt: draft.reminderAt,
+      repeat: draft.repeat,
+      flagged: draft.flagged || undefined,
       createdAt: now().toISOString(),
     },
     ...tasks,

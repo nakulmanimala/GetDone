@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { addImage, addTask, completeTask, filterTasks, initialTasks, removeImage, type Task } from './tasks'
+import { addImage, addTask, completeTask, createTask, filterTasks, initialTasks, removeImage, type Task } from './tasks'
 
 describe('task domain', () => {
   it('adds a task to the inbox with safe defaults', () => {
@@ -18,6 +18,48 @@ describe('task domain', () => {
 
   it('does not add an empty task', () => {
     expect(addTask(initialTasks, '   ')).toBe(initialTasks)
+  })
+
+  it('creates a task with full details from the composer modal', () => {
+    const tasks = createTask(
+      [],
+      {
+        title: '  Write release notes  ',
+        note: '<b>Cover</b> the sync changes',
+        project: 'GetDone',
+        priority: 'high',
+        dueDate: '2026-08-15',
+        reminderAt: '2026-08-15T09:00:00.000Z',
+        repeat: 'weekly',
+        flagged: true,
+      },
+      () => 'task-1',
+      () => new Date('2026-08-14T08:00:00Z'),
+    )
+
+    expect(tasks).toEqual([
+      expect.objectContaining({
+        id: 'task-1',
+        title: 'Write release notes',
+        status: 'open',
+        note: '<b>Cover</b> the sync changes',
+        project: 'GetDone',
+        priority: 'high',
+        dueDate: '2026-08-15',
+        reminderAt: '2026-08-15T09:00:00.000Z',
+        repeat: 'weekly',
+        flagged: true,
+      }),
+    ])
+  })
+
+  it('does not create a detailed task without a title', () => {
+    expect(createTask(initialTasks, { title: '   ', priority: 'high' })).toBe(initialTasks)
+  })
+
+  it('omits the flagged field when the flag is off', () => {
+    const tasks = createTask([], { title: 'Plain', flagged: false }, () => 'task-1')
+    expect(tasks[0].flagged).toBeUndefined()
   })
 
   it('marks a task complete without changing the other tasks', () => {

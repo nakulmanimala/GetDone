@@ -1,15 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import {
   Archive,
+  Bell,
   CalendarDays,
   Check,
   CheckCircle2,
   ChevronRight,
   Circle,
   Cloud,
+  Flag,
   Inbox,
   Menu,
   Plus,
+  Repeat as RepeatIcon,
   Search,
   Settings,
   Sparkles,
@@ -17,10 +20,12 @@ import {
   X,
 } from 'lucide-react'
 import './App.css'
+import { RichNoteEditor, stripHtml } from './components/richText'
+import { TaskCreateModal } from './components/TaskCreateModal'
 import {
   addImage,
-  addTask,
   completeTask,
+  createTask,
   deleteTask,
   filterTasks,
   initialTasks,
@@ -28,6 +33,7 @@ import {
   reopenTask,
   updateTask,
   type Task,
+  type TaskDraft,
   type View,
 } from './domain/tasks'
 import { compressImageFile, findImageFile } from './media/clipboardImage'
@@ -55,6 +61,7 @@ const viewLabels: Record<View, string> = {
 
 const viewIcons = { inbox: Inbox, today: CalendarDays, upcoming: Archive, completed: CheckCircle2 }
 const projectColors: Record<string, string> = { Personal: '#a78bfa', DevOps: '#38bdf8', GetDone: '#34d399', Inbox: '#8a8f98' }
+const projectNames = ['Inbox', 'Personal', 'DevOps', 'GetDone']
 
 function formatDueDate(date?: string) {
   if (!date) return 'No due date'
@@ -71,6 +78,7 @@ function App() {
   const [query, setQuery] = useState('')
   const [draft, setDraft] = useState('')
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [composerOpen, setComposerOpen] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [syncPanelOpen, setSyncPanelOpen] = useState(false)
   const [syncStatus, setSyncStatus] = useState<SyncStatus>({ kind: 'idle' })
@@ -151,7 +159,7 @@ function App() {
     const filtered = filterTasks(tasks, view)
     const normalizedQuery = query.trim().toLowerCase()
     return normalizedQuery
-      ? filtered.filter((task) => `${task.title} ${task.project} ${task.note ?? ''}`.toLowerCase().includes(normalizedQuery))
+      ? filtered.filter((task) => `${task.title} ${task.project} ${stripHtml(task.note ?? '')}`.toLowerCase().includes(normalizedQuery))
       : filtered
   }, [query, tasks, view])
 
@@ -163,12 +171,14 @@ function App() {
 
   function submitTask(event: FormEvent) {
     event.preventDefault()
-    const next = addTask(tasks, draft)
-    if (next !== tasks) {
-      applyLocalChange(next)
-      setDraft('')
-      setView('inbox')
-    }
+    setComposerOpen(true)
+  }
+
+  function handleCreateTask(taskDraft: TaskDraft) {
+    applyLocalChange(createTask(tasks, taskDraft))
+    setDraft('')
+    setComposerOpen(false)
+    setView('inbox')
   }
 
   function chooseView(nextView: View) {
@@ -194,7 +204,7 @@ function App() {
           <button className="icon-button sidebar-close" onClick={() => setSidebarOpen(false)} aria-label="Close sidebar"><X size={18} /></button>
         </div>
 
-        <button className="quick-add" onClick={() => document.getElementById('quick-task')?.focus()}><Plus size={17} /> Add task <kbd>⌘ N</kbd></button>
+        <button className="quick-add" onClick={() => { setComposerOpen(true); setSidebarOpen(false) }}><Plus size={17} /> Add task <kbd>⌘ N</kbd></button>
 
         <nav className="nav-list" aria-label="Task views">
           {(Object.keys(viewLabels) as View[]).map((item) => {
@@ -241,7 +251,7 @@ function App() {
           <form className="task-composer" onSubmit={submitTask}>
             <div className="composer-plus"><Plus size={18} /></div>
             <input id="quick-task" value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="What needs to be done?" aria-label="New task title" />
-            <button type="submit" disabled={!draft.trim()}>Add task</button>
+            <button type="submit">Add task</button>
           </form>
 
           <div className="task-list">
@@ -250,7 +260,7 @@ function App() {
                 <button className={`complete-button priority-${task.priority}`} onClick={(event) => { event.stopPropagation(); applyLocalChange(task.status === 'completed' ? reopenTask(tasks, task.id) : completeTask(tasks, task.id)) }} aria-label={task.status === 'completed' ? `Reopen ${task.title}` : `Complete ${task.title}`}>
                   {task.status === 'completed' ? <Check size={14} /> : <Circle size={17} />}
                 </button>
-                <div className="task-copy"><h3 className={task.status === 'completed' ? 'done' : ''}>{task.title}</h3><div><span><i style={{ background: projectColors[task.project] ?? '#8a8f98' }} />{task.project}</span>{task.dueDate && <span className="due"><CalendarDays size={13} />{formatDueDate(task.dueDate)}</span>}{task.priority !== 'none' && <span className={`priority-label ${task.priority}`}>{task.priority}</span>}</div></div>
+                <div className="task-copy"><h3 className={task.status === 'completed' ? 'done' : ''}>{task.title}</h3><div><span><i style={{ background: projectColors[task.project] ?? '#8a8f98' }} />{task.project}</span>{task.dueDate && <span className="due"><CalendarDays size={13} />{formatDueDate(task.dueDate)}</span>}{task.repeat && <span className="due"><RepeatIcon size={12} />{task.repeat}</span>}{task.reminderAt && <span className="due"><Bell size={12} /></span>}{task.priority !== 'none' && <span className={`priority-label ${task.priority}`}>{task.priority}</span>}{task.flagged && <span className="flag-badge"><Flag size={12} /></span>}</div></div>
                 <ChevronRight className="row-chevron" size={17} />
               </article>
             ))}
@@ -264,10 +274,10 @@ function App() {
         <div className="detail-body">
           <button className={`large-check priority-${selected.priority}`} onClick={() => applyLocalChange(selected.status === 'completed' ? reopenTask(tasks, selected.id) : completeTask(tasks, selected.id))}>{selected.status === 'completed' && <Check size={16} />}</button>
           <textarea className="title-editor" value={selected.title} onChange={(event) => applyLocalChange(updateTask(tasks, { ...selected, title: event.target.value }))} aria-label="Task title" />
-          <label>Project<select value={selected.project} onChange={(event) => applyLocalChange(updateTask(tasks, { ...selected, project: event.target.value }))}>{['Inbox', 'Personal', 'DevOps', 'GetDone'].map((project) => <option key={project}>{project}</option>)}</select></label>
+          <label>Project<select value={selected.project} onChange={(event) => applyLocalChange(updateTask(tasks, { ...selected, project: event.target.value }))}>{projectNames.map((project) => <option key={project}>{project}</option>)}</select></label>
           <label>Due date<input type="date" value={selected.dueDate ?? ''} onChange={(event) => applyLocalChange(updateTask(tasks, { ...selected, dueDate: event.target.value || undefined }))} /></label>
           <label>Priority<select value={selected.priority} onChange={(event) => applyLocalChange(updateTask(tasks, { ...selected, priority: event.target.value as Task['priority'] }))}><option value="none">None</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></label>
-          <label>Notes<textarea className="note-editor" value={selected.note ?? ''} placeholder="Add notes…" onChange={(event) => applyLocalChange(updateTask(tasks, { ...selected, note: event.target.value }))} /></label>
+          <label>Notes<RichNoteEditor key={selected.id} initialHtml={selected.note ?? ''} placeholder="Add notes…" ariaLabel="Task notes" onChange={(html) => applyLocalChange(updateTask(tasks, { ...selected, note: html || undefined }))} /></label>
 
           <div className="image-section">
             <div className="image-section-label">Images{selected.images?.length ? <span>{selected.images.length}</span> : null}</div>
@@ -287,6 +297,15 @@ function App() {
         </div>
         <div className="detail-footer"><button className="delete-button" onClick={() => { applyLocalChange(deleteTask(tasks, selected.id)); setSelectedId(null) }}><Trash2 size={15} /> Delete task</button></div>
       </aside>}
+
+      {composerOpen && (
+        <TaskCreateModal
+          initialTitle={draft}
+          projects={projectNames}
+          onCancel={() => setComposerOpen(false)}
+          onCreate={handleCreateTask}
+        />
+      )}
 
       {syncPanelOpen && (
         <SyncPanel

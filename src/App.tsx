@@ -9,6 +9,7 @@ import {
   Menu,
   Plus,
   Repeat as RepeatIcon,
+  RotateCcw,
   Search,
   Settings,
   Star,
@@ -22,11 +23,15 @@ import {
   addImage,
   completeTask,
   createTask,
+  deleteList,
   deleteTask,
+  emptyTrash,
   initialTasks,
   moveTask,
+  purgeTask,
   removeImage,
   reopenTask,
+  restoreTask,
   updateTask,
   type Task,
   type TaskDraft,
@@ -67,7 +72,7 @@ function App() {
     const fromTasks = loadTasks(initialTasks).map((task) => task.project)
     return [...new Set([...stored, ...fromTasks])]
   })
-  const [boardView, setBoardView] = useState<'all' | 'starred'>('all')
+  const [boardView, setBoardView] = useState<'all' | 'starred' | 'trash'>('all')
   const [hiddenLists, setHiddenLists] = useState<string[]>([])
   const [completedOpen, setCompletedOpen] = useState<Record<string, boolean>>({})
   const [newListOpen, setNewListOpen] = useState(false)
@@ -169,8 +174,9 @@ function App() {
   )
 
   const boardColumns = useMemo(() => {
+    const live = tasks.filter((task) => !task.deletedAt && matchesQuery(task))
     if (boardView === 'starred') {
-      const starred = tasks.filter((task) => task.flagged && matchesQuery(task))
+      const starred = live.filter((task) => task.flagged)
       return [{
         name: 'Starred',
         open: starred.filter((task) => task.status === 'open'),
@@ -180,7 +186,7 @@ function App() {
     return projects
       .filter((project) => !hiddenLists.includes(project))
       .map((project) => {
-        const inProject = tasks.filter((task) => task.project === project && matchesQuery(task))
+        const inProject = live.filter((task) => task.project === project)
         return {
           name: project,
           open: inProject.filter((task) => task.status === 'open'),
@@ -189,11 +195,18 @@ function App() {
       })
   }, [boardView, hiddenLists, matchesQuery, projects, tasks])
 
-  const selected = tasks.find((task) => task.id === selectedId) ?? null
-  const openCount = tasks.filter((task) => task.status === 'open').length
-  const completedCount = tasks.filter((task) => task.status === 'completed').length
-  const starredCount = tasks.filter((task) => task.flagged && task.status === 'open').length
-  const completion = tasks.length ? Math.round((completedCount / tasks.length) * 100) : 0
+  const trashedTasks = useMemo(
+    () => tasks.filter((task) => Boolean(task.deletedAt) && matchesQuery(task)),
+    [matchesQuery, tasks],
+  )
+
+  const selected = tasks.find((task) => task.id === selectedId && !task.deletedAt) ?? null
+  const liveTasks = tasks.filter((task) => !task.deletedAt)
+  const openCount = liveTasks.filter((task) => task.status === 'open').length
+  const completedCount = liveTasks.filter((task) => task.status === 'completed').length
+  const starredCount = liveTasks.filter((task) => task.flagged && task.status === 'open').length
+  const trashCount = tasks.length - liveTasks.length
+  const completion = liveTasks.length ? Math.round((completedCount / liveTasks.length) * 100) : 0
 
   const projectColor = useCallback(
     (project: string) => baseProjectColors[project] ?? projectPalette[Math.max(0, projects.indexOf(project)) % projectPalette.length],
@@ -231,6 +244,23 @@ function App() {
     applyLocalChange(updateTask(tasks, { ...task, flagged: !task.flagged || undefined }))
   }
 
+  function trashTask(task: Task) {
+    applyLocalChange(deleteTask(tasks, task.id))
+    if (selectedId === task.id) setSelectedId(null)
+  }
+
+  function handleDeleteList(project: string) {
+    if (!window.confirm(`Delete the list "${project}"? Its tasks will move to Inbox.`)) return
+    applyLocalChange(deleteList(tasks, project))
+    setProjects((current) => current.filter((name) => name !== project))
+    setHiddenLists((hidden) => hidden.filter((name) => name !== project))
+  }
+
+  function handleEmptyTrash() {
+    if (!window.confirm(`Permanently delete ${trashCount === 1 ? 'this task' : `all ${trashCount} tasks`} in the bin? This cannot be undone.`)) return
+    applyLocalChange(emptyTrash(tasks))
+  }
+
   function toggleComplete(task: Task) {
     applyLocalChange(task.status === 'completed' ? reopenTask(tasks, task.id) : completeTask(tasks, task.id))
   }
@@ -259,7 +289,7 @@ function App() {
     setDropTarget(null)
   }
 
-  function chooseBoardView(next: 'all' | 'starred') {
+  function chooseBoardView(next: 'all' | 'starred' | 'trash') {
     setBoardView(next)
     setSelectedId(null)
     setSidebarOpen(false)
@@ -301,11 +331,37 @@ function App() {
         )}
       </div>
       <button
+        className="row-delete"
+        onClick={(event) => { event.stopPropagation(); trashTask(task) }}
+        aria-label={`Move ${task.title} to the bin`}
+      >
+        <Trash2 size={14} />
+      </button>
+      <button
         className={`star-button ${task.flagged ? 'starred' : ''}`}
         onClick={(event) => { event.stopPropagation(); toggleStar(task) }}
         aria-label={task.flagged ? `Unstar ${task.title}` : `Star ${task.title}`}
       >
         <Star size={15} />
+      </button>
+    </article>
+  )
+
+  const renderTrashRow = (task: Task) => (
+    <article key={task.id} className="board-row trash-row">
+      <div className="board-copy">
+        <h4>{task.title}</h4>
+        <p>{task.project} · deleted {formatDueDate(task.deletedAt?.slice(0, 10)).toLowerCase()}</p>
+      </div>
+      <button className="row-restore" onClick={() => applyLocalChange(restoreTask(tasks, task.id))} aria-label={`Restore ${task.title}`}>
+        <RotateCcw size={14} />
+      </button>
+      <button
+        className="row-delete row-purge"
+        onClick={() => { if (window.confirm(`Permanently delete "${task.title}"? This cannot be undone.`)) applyLocalChange(purgeTask(tasks, task.id)) }}
+        aria-label={`Permanently delete ${task.title}`}
+      >
+        <Trash2 size={14} />
       </button>
     </article>
   )
@@ -324,6 +380,7 @@ function App() {
         <nav className="nav-list" aria-label="Task views">
           <button className={boardView === 'all' ? 'active' : ''} onClick={() => chooseBoardView('all')}><CheckCircle2 size={17} /><span>All tasks</span><em>{openCount}</em></button>
           <button className={boardView === 'starred' ? 'active' : ''} onClick={() => chooseBoardView('starred')}><Star size={17} /><span>Starred</span><em>{starredCount}</em></button>
+          <button className={boardView === 'trash' ? 'active' : ''} onClick={() => chooseBoardView('trash')}><Trash2 size={17} /><span>Bin</span><em>{trashCount}</em></button>
         </nav>
 
         <div className="section-label">Lists</div>
@@ -333,7 +390,16 @@ function App() {
               <input type="checkbox" checked={!hiddenLists.includes(project)} onChange={() => toggleList(project)} aria-label={`Show ${project}`} />
               <i style={{ background: projectColor(project) }} />
               <span>{project}</span>
-              <em>{tasks.filter((task) => task.project === project && task.status === 'open').length}</em>
+              {project !== 'Inbox' && (
+                <button
+                  className="list-delete"
+                  onClick={(event) => { event.preventDefault(); event.stopPropagation(); handleDeleteList(project) }}
+                  aria-label={`Delete list ${project}`}
+                >
+                  <Trash2 size={13} />
+                </button>
+              )}
+              <em>{liveTasks.filter((task) => task.project === project && task.status === 'open').length}</em>
             </label>
           ))}
           {newListOpen ? (
@@ -381,7 +447,25 @@ function App() {
           )}
 
           <div className="board">
-            {boardColumns.map((column) => (
+            {boardView === 'trash' && (
+              <div className="board-column">
+                <div className="column-head">
+                  <h2>Recycle bin</h2>
+                  {trashedTasks.length > 0 && <button className="empty-trash" onClick={handleEmptyTrash}>Empty bin</button>}
+                </div>
+                <div className="column-tasks">
+                  {trashedTasks.map(renderTrashRow)}
+                  {!trashedTasks.length && (
+                    <div className="board-empty">
+                      <Trash2 size={22} />
+                      <strong>Bin is empty</strong>
+                      <p>Deleted tasks land here and can be restored.</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+            {boardView !== 'trash' && boardColumns.map((column) => (
               <div
                 className={`board-column ${dropTarget === column.name && boardView === 'all' ? 'drop-target' : ''}`}
                 key={column.name}
@@ -391,6 +475,11 @@ function App() {
               >
                 <div className="column-head">
                   <h2>{column.name}</h2>
+                  {boardView === 'all' && column.name !== 'Inbox' && (
+                    <button className="column-delete" onClick={() => handleDeleteList(column.name)} aria-label={`Delete list ${column.name}`}>
+                      <Trash2 size={14} />
+                    </button>
+                  )}
                   {boardView === 'all' && <span className="column-dot" style={{ background: projectColor(column.name) }} />}
                   {boardView === 'starred' && <Star size={14} className="column-star" />}
                 </div>
@@ -455,7 +544,7 @@ function App() {
             )}
           </div>
         </div>
-        <div className="detail-footer"><button className="delete-button" onClick={() => { applyLocalChange(deleteTask(tasks, selected.id)); setSelectedId(null) }}><Trash2 size={15} /> Delete task</button></div>
+        <div className="detail-footer"><button className="delete-button" onClick={() => trashTask(selected)}><Trash2 size={15} /> Move to bin</button></div>
       </aside>}
 
       {composerOpen && (

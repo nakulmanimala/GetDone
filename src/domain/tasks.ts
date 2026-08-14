@@ -22,6 +22,7 @@ export interface Task {
   flagged?: boolean
   createdAt: string
   completedAt?: string
+  deletedAt?: string
   images?: TaskImage[]
 }
 
@@ -121,8 +122,29 @@ export function reopenTask(tasks: Task[], id: string): Task[] {
   )
 }
 
-export function deleteTask(tasks: Task[], id: string): Task[] {
+// Deleting is soft: the task moves to the recycle bin, where it can be
+// restored (restoreTask) or removed for good (purgeTask / emptyTrash).
+export function deleteTask(tasks: Task[], id: string, now: () => Date = defaultNow): Task[] {
+  return tasks.map((task) => (task.id === id ? { ...task, deletedAt: now().toISOString() } : task))
+}
+
+export function restoreTask(tasks: Task[], id: string): Task[] {
+  return tasks.map((task) => (task.id === id ? { ...task, deletedAt: undefined } : task))
+}
+
+export function purgeTask(tasks: Task[], id: string): Task[] {
   return tasks.filter((task) => task.id !== id)
+}
+
+export function emptyTrash(tasks: Task[]): Task[] {
+  return tasks.filter((task) => !task.deletedAt)
+}
+
+// Removing a list keeps its tasks: they are reassigned to the fallback list
+// (Inbox), including any that are sitting in the recycle bin.
+export function deleteList(tasks: Task[], project: string, fallback = 'Inbox'): Task[] {
+  if (!tasks.some((task) => task.project === project)) return tasks
+  return tasks.map((task) => (task.project === project ? { ...task, project: fallback } : task))
 }
 
 export function updateTask(tasks: Task[], updated: Task): Task[] {

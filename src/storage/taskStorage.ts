@@ -2,6 +2,7 @@ import type { Task } from '../domain/tasks'
 
 const STORAGE_KEY = 'getdone.tasks.v1'
 const LEGACY_STORAGE_KEY = 'nakul-todo.tasks.v1'
+const PROJECTS_KEY = 'getdone.projects.v1'
 
 function parseTasks(raw: string | null): Task[] | null {
   if (!raw) return null
@@ -31,5 +32,25 @@ export function saveTasks(tasks: Task[]): boolean {
     return true
   } catch {
     return false
+  }
+}
+
+export function loadProjects(fallback: string[]): string[] {
+  try {
+    const parsed: unknown = JSON.parse(localStorage.getItem(PROJECTS_KEY) ?? 'null')
+    return Array.isArray(parsed) && parsed.every((name) => typeof name === 'string') && parsed.length
+      ? (parsed as string[])
+      : fallback
+  } catch {
+    return fallback
+  }
+}
+
+export function saveProjects(projects: string[]): void {
+  try {
+    localStorage.setItem(PROJECTS_KEY, JSON.stringify(projects))
+  } catch {
+    // Task data has priority for the remaining quota; losing the list of
+    // project names is recoverable since they are re-derived from tasks.
   }
 }

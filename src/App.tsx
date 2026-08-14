@@ -1,21 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import {
-  Archive,
   Bell,
-  CalendarDays,
   Check,
   CheckCircle2,
   ChevronRight,
   Circle,
   Cloud,
-  Flag,
-  Inbox,
   Menu,
   Plus,
   Repeat as RepeatIcon,
   Search,
   Settings,
-  Sparkles,
+  Star,
   Trash2,
   X,
 } from 'lucide-react'
@@ -27,17 +23,15 @@ import {
   completeTask,
   createTask,
   deleteTask,
-  filterTasks,
   initialTasks,
   removeImage,
   reopenTask,
   updateTask,
   type Task,
   type TaskDraft,
-  type View,
 } from './domain/tasks'
 import { compressImageFile, findImageFile } from './media/clipboardImage'
-import { loadTasks, saveTasks } from './storage/taskStorage'
+import { loadProjects, loadTasks, saveProjects, saveTasks } from './storage/taskStorage'
 import { createApiClient } from './sync/apiClient'
 import { SyncPanel } from './sync/SyncPanel'
 import { applySyncOutcome, checkSync, describeSyncError } from './sync/syncActions'
@@ -52,16 +46,9 @@ import { describeSyncStatus, type SyncStatus } from './sync/syncStatus'
 const AUTO_SYNC_DEBOUNCE_MS = 3_000
 const AUTO_SYNC_INTERVAL_MS = 5 * 60_000
 
-const viewLabels: Record<View, string> = {
-  inbox: 'Inbox',
-  today: 'Today',
-  upcoming: 'Upcoming',
-  completed: 'Completed',
-}
-
-const viewIcons = { inbox: Inbox, today: CalendarDays, upcoming: Archive, completed: CheckCircle2 }
-const projectColors: Record<string, string> = { Personal: '#a78bfa', DevOps: '#38bdf8', GetDone: '#34d399', Inbox: '#8a8f98' }
-const projectNames = ['Inbox', 'Personal', 'DevOps', 'GetDone']
+const defaultProjects = ['Inbox', 'Personal', 'DevOps', 'GetDone']
+const baseProjectColors: Record<string, string> = { Personal: '#a78bfa', DevOps: '#38bdf8', GetDone: '#34d399', Inbox: '#8a8f98' }
+const projectPalette = ['#7170ff', '#a78bfa', '#38bdf8', '#34d399', '#fbbf24', '#fb7185']
 
 function formatDueDate(date?: string) {
   if (!date) return 'No due date'
@@ -74,11 +61,20 @@ function formatDueDate(date?: string) {
 
 function App() {
   const [tasks, setTasks] = useState<Task[]>(() => loadTasks(initialTasks))
-  const [view, setView] = useState<View>('today')
+  const [projects, setProjects] = useState<string[]>(() => {
+    const stored = loadProjects(defaultProjects)
+    const fromTasks = loadTasks(initialTasks).map((task) => task.project)
+    return [...new Set([...stored, ...fromTasks])]
+  })
+  const [boardView, setBoardView] = useState<'all' | 'starred'>('all')
+  const [hiddenLists, setHiddenLists] = useState<string[]>([])
+  const [completedOpen, setCompletedOpen] = useState<Record<string, boolean>>({})
+  const [newListOpen, setNewListOpen] = useState(false)
+  const [newListName, setNewListName] = useState('')
   const [query, setQuery] = useState('')
-  const [draft, setDraft] = useState('')
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [composerOpen, setComposerOpen] = useState(false)
+  const [composerProject, setComposerProject] = useState<string | undefined>(undefined)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [syncPanelOpen, setSyncPanelOpen] = useState(false)
   const [syncStatus, setSyncStatus] = useState<SyncStatus>({ kind: 'idle' })
@@ -90,6 +86,10 @@ function App() {
     setStorageFull(!saveTasks(tasks))
   }, [tasks])
 
+  useEffect(() => {
+    saveProjects(projects)
+  }, [projects])
+
   const applyLocalChange = useCallback((next: Task[]) => {
     setTasks(next)
     touchUpdatedAt()
@@ -97,6 +97,7 @@ function App() {
 
   const applyRemoteSnapshot = useCallback((next: Task[], remoteUpdatedAt: string) => {
     setTasks(next)
+    setProjects((current) => [...new Set([...current, ...next.map((task) => task.project)])])
     setSyncUpdatedAt(remoteUpdatedAt)
     setLastSyncedAt(remoteUpdatedAt)
   }, [])
@@ -155,34 +156,84 @@ function App() {
     // deliberately not re-armed on every task edit — see tasksRef above.
   }, [syncConfigured, runAutoSync])
 
-  const visibleTasks = useMemo(() => {
-    const filtered = filterTasks(tasks, view)
-    const normalizedQuery = query.trim().toLowerCase()
-    return normalizedQuery
-      ? filtered.filter((task) => `${task.title} ${task.project} ${stripHtml(task.note ?? '')}`.toLowerCase().includes(normalizedQuery))
-      : filtered
-  }, [query, tasks, view])
+  const matchesQuery = useCallback(
+    (task: Task) => {
+      const normalized = query.trim().toLowerCase()
+      if (!normalized) return true
+      return `${task.title} ${task.project} ${stripHtml(task.note ?? '')}`.toLowerCase().includes(normalized)
+    },
+    [query],
+  )
+
+  const boardColumns = useMemo(() => {
+    if (boardView === 'starred') {
+      const starred = tasks.filter((task) => task.flagged && matchesQuery(task))
+      return [{
+        name: 'Starred',
+        open: starred.filter((task) => task.status === 'open'),
+        completed: starred.filter((task) => task.status === 'completed'),
+      }]
+    }
+    return projects
+      .filter((project) => !hiddenLists.includes(project))
+      .map((project) => {
+        const inProject = tasks.filter((task) => task.project === project && matchesQuery(task))
+        return {
+          name: project,
+          open: inProject.filter((task) => task.status === 'open'),
+          completed: inProject.filter((task) => task.status === 'completed'),
+        }
+      })
+  }, [boardView, hiddenLists, matchesQuery, projects, tasks])
 
   const selected = tasks.find((task) => task.id === selectedId) ?? null
-  const today = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
   const openCount = tasks.filter((task) => task.status === 'open').length
   const completedCount = tasks.filter((task) => task.status === 'completed').length
+  const starredCount = tasks.filter((task) => task.flagged && task.status === 'open').length
   const completion = tasks.length ? Math.round((completedCount / tasks.length) * 100) : 0
 
-  function submitTask(event: FormEvent) {
-    event.preventDefault()
+  const projectColor = useCallback(
+    (project: string) => baseProjectColors[project] ?? projectPalette[Math.max(0, projects.indexOf(project)) % projectPalette.length],
+    [projects],
+  )
+
+  function openComposer(project?: string) {
+    setComposerProject(project)
     setComposerOpen(true)
+    setSidebarOpen(false)
   }
 
   function handleCreateTask(taskDraft: TaskDraft) {
     applyLocalChange(createTask(tasks, taskDraft))
-    setDraft('')
     setComposerOpen(false)
-    setView('inbox')
+    if (taskDraft.project) {
+      // Surface the task right away even if its list was unchecked.
+      setHiddenLists((hidden) => hidden.filter((name) => name !== taskDraft.project))
+    }
   }
 
-  function chooseView(nextView: View) {
-    setView(nextView)
+  function toggleList(project: string) {
+    setHiddenLists((hidden) => (hidden.includes(project) ? hidden.filter((name) => name !== project) : [...hidden, project]))
+  }
+
+  function submitNewList(event: FormEvent) {
+    event.preventDefault()
+    const name = newListName.trim()
+    if (name && !projects.includes(name)) setProjects([...projects, name])
+    setNewListName('')
+    setNewListOpen(false)
+  }
+
+  function toggleStar(task: Task) {
+    applyLocalChange(updateTask(tasks, { ...task, flagged: !task.flagged || undefined }))
+  }
+
+  function toggleComplete(task: Task) {
+    applyLocalChange(task.status === 'completed' ? reopenTask(tasks, task.id) : completeTask(tasks, task.id))
+  }
+
+  function chooseBoardView(next: 'all' | 'starred') {
+    setBoardView(next)
     setSelectedId(null)
     setSidebarOpen(false)
   }
@@ -195,6 +246,33 @@ function App() {
 
   const syncStatusView = describeSyncStatus(syncStatus, syncConfigured)
 
+  const renderRow = (task: Task) => (
+    <article key={task.id} className={`board-row ${selectedId === task.id ? 'selected' : ''}`} onClick={() => { setSelectedId(task.id); setSyncPanelOpen(false) }}>
+      <button className={`complete-button priority-${task.priority}`} onClick={(event) => { event.stopPropagation(); toggleComplete(task) }} aria-label={task.status === 'completed' ? `Reopen ${task.title}` : `Complete ${task.title}`}>
+        {task.status === 'completed' ? <Check size={14} /> : <Circle size={16} />}
+      </button>
+      <div className="board-copy">
+        <h4 className={task.status === 'completed' ? 'done' : ''}>{task.title}</h4>
+        {task.note && <p>{stripHtml(task.note)}</p>}
+        {(task.dueDate || task.repeat || task.reminderAt || task.priority !== 'none') && (
+          <div className="board-chips">
+            {task.dueDate && <span className="due-chip">{formatDueDate(task.dueDate)}</span>}
+            {task.repeat && <span className="due-chip"><RepeatIcon size={11} /></span>}
+            {task.reminderAt && <span className="due-chip"><Bell size={11} /></span>}
+            {task.priority !== 'none' && <span className={`priority-label ${task.priority}`}>{task.priority}</span>}
+          </div>
+        )}
+      </div>
+      <button
+        className={`star-button ${task.flagged ? 'starred' : ''}`}
+        onClick={(event) => { event.stopPropagation(); toggleStar(task) }}
+        aria-label={task.flagged ? `Unstar ${task.title}` : `Star ${task.title}`}
+      >
+        <Star size={15} />
+      </button>
+    </article>
+  )
+
   return (
     <div className="app-shell">
       <aside className={`sidebar ${sidebarOpen ? 'sidebar-open' : ''}`}>
@@ -204,19 +282,41 @@ function App() {
           <button className="icon-button sidebar-close" onClick={() => setSidebarOpen(false)} aria-label="Close sidebar"><X size={18} /></button>
         </div>
 
-        <button className="quick-add" onClick={() => { setComposerOpen(true); setSidebarOpen(false) }}><Plus size={17} /> Add task <kbd>⌘ N</kbd></button>
+        <button className="create-button" onClick={() => openComposer()}><Plus size={17} /> Create</button>
 
         <nav className="nav-list" aria-label="Task views">
-          {(Object.keys(viewLabels) as View[]).map((item) => {
-            const Icon = viewIcons[item]
-            const count = item === 'completed' ? completedCount : item === 'inbox' ? openCount : filterTasks(tasks, item).length
-            return <button key={item} className={view === item ? 'active' : ''} onClick={() => chooseView(item)}><Icon size={17} /><span>{viewLabels[item]}</span><em>{count}</em></button>
-          })}
+          <button className={boardView === 'all' ? 'active' : ''} onClick={() => chooseBoardView('all')}><CheckCircle2 size={17} /><span>All tasks</span><em>{openCount}</em></button>
+          <button className={boardView === 'starred' ? 'active' : ''} onClick={() => chooseBoardView('starred')}><Star size={17} /><span>Starred</span><em>{starredCount}</em></button>
         </nav>
 
-        <div className="section-label">Projects <Plus size={14} /></div>
+        <div className="section-label">Lists</div>
         <div className="project-list">
-          {['Personal', 'DevOps', 'GetDone'].map((project) => <button key={project}><i style={{ background: projectColors[project] }} />{project}<span>{tasks.filter((task) => task.project === project && task.status === 'open').length}</span></button>)}
+          {projects.map((project) => (
+            <label key={project} className="list-row">
+              <input type="checkbox" checked={!hiddenLists.includes(project)} onChange={() => toggleList(project)} aria-label={`Show ${project}`} />
+              <i style={{ background: projectColor(project) }} />
+              <span>{project}</span>
+              <em>{tasks.filter((task) => task.project === project && task.status === 'open').length}</em>
+            </label>
+          ))}
+          {newListOpen ? (
+            <form className="new-list-form" onSubmit={submitNewList}>
+              <input
+                autoFocus
+                value={newListName}
+                onChange={(event) => setNewListName(event.target.value)}
+                onBlur={submitNewList}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') submitNewList(event)
+                  if (event.key === 'Escape') { setNewListName(''); setNewListOpen(false) }
+                }}
+                placeholder="List name"
+                aria-label="New list name"
+              />
+            </form>
+          ) : (
+            <button className="new-list" onClick={() => setNewListOpen(true)}><Plus size={15} /> Create new list</button>
+          )}
         </div>
 
         <div className="sidebar-footer">
@@ -243,28 +343,45 @@ function App() {
             </div>
           )}
 
-          <div className="page-heading">
-            <div><p>{today}</p><h1>{viewLabels[view]}</h1><span>{visibleTasks.length} {visibleTasks.length === 1 ? 'task' : 'tasks'} in this view</span></div>
-            <button className="focus-button"><Sparkles size={16} /> Focus mode</button>
-          </div>
+          <div className="board">
+            {boardColumns.map((column) => (
+              <div className="board-column" key={column.name}>
+                <div className="column-head">
+                  <h2>{column.name}</h2>
+                  {boardView === 'all' && <span className="column-dot" style={{ background: projectColor(column.name) }} />}
+                  {boardView === 'starred' && <Star size={14} className="column-star" />}
+                </div>
 
-          <form className="task-composer" onSubmit={submitTask}>
-            <div className="composer-plus"><Plus size={18} /></div>
-            <input id="quick-task" value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="What needs to be done?" aria-label="New task title" />
-            <button type="submit">Add task</button>
-          </form>
+                {boardView === 'all' && (
+                  <button className="column-add" onClick={() => openComposer(column.name)}><Plus size={16} /> Add a task</button>
+                )}
 
-          <div className="task-list">
-            {visibleTasks.map((task) => (
-              <article key={task.id} className={`task-row ${selectedId === task.id ? 'selected' : ''}`} onClick={() => { setSelectedId(task.id); setSyncPanelOpen(false) }}>
-                <button className={`complete-button priority-${task.priority}`} onClick={(event) => { event.stopPropagation(); applyLocalChange(task.status === 'completed' ? reopenTask(tasks, task.id) : completeTask(tasks, task.id)) }} aria-label={task.status === 'completed' ? `Reopen ${task.title}` : `Complete ${task.title}`}>
-                  {task.status === 'completed' ? <Check size={14} /> : <Circle size={17} />}
-                </button>
-                <div className="task-copy"><h3 className={task.status === 'completed' ? 'done' : ''}>{task.title}</h3><div><span><i style={{ background: projectColors[task.project] ?? '#8a8f98' }} />{task.project}</span>{task.dueDate && <span className="due"><CalendarDays size={13} />{formatDueDate(task.dueDate)}</span>}{task.repeat && <span className="due"><RepeatIcon size={12} />{task.repeat}</span>}{task.reminderAt && <span className="due"><Bell size={12} /></span>}{task.priority !== 'none' && <span className={`priority-label ${task.priority}`}>{task.priority}</span>}{task.flagged && <span className="flag-badge"><Flag size={12} /></span>}</div></div>
-                <ChevronRight className="row-chevron" size={17} />
-              </article>
+                <div className="column-tasks">
+                  {column.open.map(renderRow)}
+                  {!column.open.length && !column.completed.length && (
+                    <div className="board-empty">
+                      <CheckCircle2 size={22} />
+                      <strong>No tasks yet</strong>
+                      <p>{boardView === 'starred' ? 'Star a task to pin it here.' : 'Add your to-dos and keep track of them here.'}</p>
+                    </div>
+                  )}
+                </div>
+
+                {column.completed.length > 0 && (
+                  <div className="board-completed">
+                    <button
+                      className="completed-toggle"
+                      aria-expanded={completedOpen[column.name] ?? false}
+                      onClick={() => setCompletedOpen((open) => ({ ...open, [column.name]: !open[column.name] }))}
+                    >
+                      <ChevronRight size={14} className={completedOpen[column.name] ? 'rotated' : ''} />
+                      Completed ({column.completed.length})
+                    </button>
+                    {(completedOpen[column.name] ?? false) && column.completed.map(renderRow)}
+                  </div>
+                )}
+              </div>
             ))}
-            {!visibleTasks.length && <div className="empty-state"><div><CheckCircle2 size={28} /></div><h2>You're all clear</h2><p>{query ? 'No tasks match your search.' : `There are no tasks in ${viewLabels[view].toLowerCase()}.`}</p></div>}
           </div>
         </section>
       </main>
@@ -272,9 +389,9 @@ function App() {
       {selected && <aside className="detail-panel">
         <div className="detail-header"><span>Task details</span><button className="icon-button" onClick={() => setSelectedId(null)} aria-label="Close task details"><X size={18} /></button></div>
         <div className="detail-body">
-          <button className={`large-check priority-${selected.priority}`} onClick={() => applyLocalChange(selected.status === 'completed' ? reopenTask(tasks, selected.id) : completeTask(tasks, selected.id))}>{selected.status === 'completed' && <Check size={16} />}</button>
+          <button className={`large-check priority-${selected.priority}`} onClick={() => toggleComplete(selected)}>{selected.status === 'completed' && <Check size={16} />}</button>
           <textarea className="title-editor" value={selected.title} onChange={(event) => applyLocalChange(updateTask(tasks, { ...selected, title: event.target.value }))} aria-label="Task title" />
-          <label>Project<select value={selected.project} onChange={(event) => applyLocalChange(updateTask(tasks, { ...selected, project: event.target.value }))}>{projectNames.map((project) => <option key={project}>{project}</option>)}</select></label>
+          <label>Project<select value={selected.project} onChange={(event) => applyLocalChange(updateTask(tasks, { ...selected, project: event.target.value }))}>{projects.map((project) => <option key={project}>{project}</option>)}</select></label>
           <label>Due date<input type="date" value={selected.dueDate ?? ''} onChange={(event) => applyLocalChange(updateTask(tasks, { ...selected, dueDate: event.target.value || undefined }))} /></label>
           <label>Priority<select value={selected.priority} onChange={(event) => applyLocalChange(updateTask(tasks, { ...selected, priority: event.target.value as Task['priority'] }))}><option value="none">None</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></label>
           <label>Notes<RichNoteEditor key={selected.id} initialHtml={selected.note ?? ''} placeholder="Add notes…" ariaLabel="Task notes" onChange={(html) => applyLocalChange(updateTask(tasks, { ...selected, note: html || undefined }))} /></label>
@@ -300,8 +417,9 @@ function App() {
 
       {composerOpen && (
         <TaskCreateModal
-          initialTitle={draft}
-          projects={projectNames}
+          initialTitle=""
+          initialProject={composerProject}
+          projects={projects}
           onCancel={() => setComposerOpen(false)}
           onCreate={handleCreateTask}
         />

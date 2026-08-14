@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { loadTasks, saveTasks } from './taskStorage'
+import { loadProjects, loadTasks, saveProjects, saveTasks } from './taskStorage'
 import type { Task } from '../domain/tasks'
 
 describe('task storage', () => {
@@ -40,5 +40,23 @@ describe('task storage', () => {
   it('returns true on a successful save', () => {
     const tasks: Task[] = [{ id: 'a', title: 'Task', status: 'open', project: 'Inbox', priority: 'none', createdAt: '2026-01-01T00:00:00Z' }]
     expect(saveTasks(tasks)).toBe(true)
+  })
+
+  it('round trips project lists through local storage', () => {
+    saveProjects(['Inbox', 'Errands'])
+    expect(loadProjects(['Inbox'])).toEqual(['Inbox', 'Errands'])
+  })
+
+  it('falls back for missing, malformed, or empty project lists', () => {
+    expect(loadProjects(['Inbox'])).toEqual(['Inbox'])
+
+    localStorage.setItem('getdone.projects.v1', '{not-json')
+    expect(loadProjects(['Inbox'])).toEqual(['Inbox'])
+
+    localStorage.setItem('getdone.projects.v1', '[]')
+    expect(loadProjects(['Inbox'])).toEqual(['Inbox'])
+
+    localStorage.setItem('getdone.projects.v1', '[1,2]')
+    expect(loadProjects(['Inbox'])).toEqual(['Inbox'])
   })
 })

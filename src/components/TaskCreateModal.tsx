@@ -29,16 +29,17 @@ const isoDate = (offsetDays = 0, now: () => Date = () => new Date()) =>
 
 interface TaskCreateModalProps {
   initialTitle: string
+  initialProject?: string
   projects: string[]
   onCancel: () => void
   onCreate: (draft: TaskDraft) => void
   now?: () => Date
 }
 
-export function TaskCreateModal({ initialTitle, projects, onCancel, onCreate, now = () => new Date() }: TaskCreateModalProps) {
+export function TaskCreateModal({ initialTitle, initialProject, projects, onCancel, onCreate, now = () => new Date() }: TaskCreateModalProps) {
   const [title, setTitle] = useState(initialTitle)
   const [titleMissing, setTitleMissing] = useState(false)
-  const [project, setProject] = useState(projects[0] ?? 'Inbox')
+  const [project, setProject] = useState(initialProject ?? projects[0] ?? 'Inbox')
   const [dueChoice, setDueChoice] = useState<DueChoice>(null)
   const [customDue, setCustomDue] = useState('')
   const [repeat, setRepeat] = useState<'none' | Repeat>('none')

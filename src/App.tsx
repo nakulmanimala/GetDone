@@ -17,6 +17,7 @@ import {
   X,
 } from 'lucide-react'
 import './App.css'
+import { ConfirmDialog, type ConfirmRequest } from './components/ConfirmDialog'
 import { RichNoteEditor, stripHtml } from './components/richText'
 import { TaskCreateModal } from './components/TaskCreateModal'
 import {
@@ -89,6 +90,7 @@ function App() {
   const [syncConfigured, setSyncConfigured] = useState(isConfigured())
   const [storageFull, setStorageFull] = useState(false)
   const [lightboxImage, setLightboxImage] = useState<string | null>(null)
+  const [confirmRequest, setConfirmRequest] = useState<ConfirmRequest | null>(null)
 
   useEffect(() => {
     setStorageFull(!saveTasks(tasks))
@@ -249,16 +251,40 @@ function App() {
     if (selectedId === task.id) setSelectedId(null)
   }
 
+  // Confirmed actions run against tasksRef.current, not the tasks closure:
+  // unlike window.confirm, the dialog doesn't block, so a background sync can
+  // land while it is open.
   function handleDeleteList(project: string) {
-    if (!window.confirm(`Delete the list "${project}"? Its tasks will move to Inbox.`)) return
-    applyLocalChange(deleteList(tasks, project))
-    setProjects((current) => current.filter((name) => name !== project))
-    setHiddenLists((hidden) => hidden.filter((name) => name !== project))
+    setConfirmRequest({
+      title: `Delete "${project}"?`,
+      message: 'Tasks in this list, including any in the bin, will move to Inbox.',
+      confirmLabel: 'Delete list',
+      action: () => {
+        applyLocalChange(deleteList(tasksRef.current, project))
+        setProjects((current) => current.filter((name) => name !== project))
+        setHiddenLists((hidden) => hidden.filter((name) => name !== project))
+      },
+    })
   }
 
   function handleEmptyTrash() {
-    if (!window.confirm(`Permanently delete ${trashCount === 1 ? 'this task' : `all ${trashCount} tasks`} in the bin? This cannot be undone.`)) return
-    applyLocalChange(emptyTrash(tasks))
+    setConfirmRequest({
+      title: 'Empty the bin?',
+      message: `${trashCount === 1 ? 'The task' : `All ${trashCount} tasks`} in the bin will be permanently deleted. This cannot be undone.`,
+      confirmLabel: 'Delete forever',
+      danger: true,
+      action: () => applyLocalChange(emptyTrash(tasksRef.current)),
+    })
+  }
+
+  function handlePurgeTask(task: Task) {
+    setConfirmRequest({
+      title: 'Delete forever?',
+      message: `"${task.title}" will be permanently deleted. This cannot be undone.`,
+      confirmLabel: 'Delete forever',
+      danger: true,
+      action: () => applyLocalChange(purgeTask(tasksRef.current, task.id)),
+    })
   }
 
   function toggleComplete(task: Task) {
@@ -358,7 +384,7 @@ function App() {
       </button>
       <button
         className="row-delete row-purge"
-        onClick={() => { if (window.confirm(`Permanently delete "${task.title}"? This cannot be undone.`)) applyLocalChange(purgeTask(tasks, task.id)) }}
+        onClick={() => handlePurgeTask(task)}
         aria-label={`Permanently delete ${task.title}`}
       >
         <Trash2 size={14} />
@@ -554,6 +580,14 @@ function App() {
           projects={projects}
           onCancel={() => setComposerOpen(false)}
           onCreate={handleCreateTask}
+        />
+      )}
+
+      {confirmRequest && (
+        <ConfirmDialog
+          request={confirmRequest}
+          onConfirm={() => { confirmRequest.action(); setConfirmRequest(null) }}
+          onCancel={() => setConfirmRequest(null)}
         />
       )}
 

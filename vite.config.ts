@@ -13,5 +13,7 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     setupFiles: './src/test/setup.ts',
+    // backend/ is a separate npm project (own deps, own `npm test`).
+    exclude: ['**/node_modules/**', 'backend/**'],
   },
 })

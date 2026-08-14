@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import {
   Archive,
   CalendarDays,
@@ -29,6 +29,19 @@ import {
   type View,
 } from './domain/tasks'
 import { loadTasks, saveTasks } from './storage/taskStorage'
+import { createApiClient } from './sync/apiClient'
+import { SyncPanel } from './sync/SyncPanel'
+import { applySyncOutcome, checkSync, describeSyncError } from './sync/syncActions'
+import {
+  isConfigured,
+  setLastSyncedAt,
+  setUpdatedAt as setSyncUpdatedAt,
+  touchUpdatedAt,
+} from './sync/syncMeta'
+import { describeSyncStatus, type SyncStatus } from './sync/syncStatus'
+
+const AUTO_SYNC_DEBOUNCE_MS = 3_000
+const AUTO_SYNC_INTERVAL_MS = 5 * 60_000
 
 const viewLabels: Record<View, string> = {
   inbox: 'Inbox',
@@ -56,8 +69,56 @@ function App() {
   const [draft, setDraft] = useState('')
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [syncPanelOpen, setSyncPanelOpen] = useState(false)
+  const [syncStatus, setSyncStatus] = useState<SyncStatus>({ kind: 'idle' })
+  const [cryptoKey, setCryptoKey] = useState<CryptoKey | null>(null)
 
   useEffect(() => saveTasks(tasks), [tasks])
+
+  function applyLocalChange(next: Task[]) {
+    setTasks(next)
+    touchUpdatedAt()
+  }
+
+  const applyRemoteSnapshot = useCallback((next: Task[], remoteUpdatedAt: string) => {
+    setTasks(next)
+    setSyncUpdatedAt(remoteUpdatedAt)
+    setLastSyncedAt(remoteUpdatedAt)
+  }, [])
+
+  // Auto backup: once unlocked, keeps running in the background even while
+  // the sync panel is closed — cryptoKey lives here, not inside SyncPanel,
+  // specifically so it survives the panel unmounting.
+  const tasksRef = useRef(tasks)
+  useEffect(() => {
+    tasksRef.current = tasks
+  }, [tasks])
+
+  const runAutoSync = useCallback(async () => {
+    if (!cryptoKey) return
+    setSyncStatus({ kind: 'working', label: 'Syncing…' })
+    try {
+      const outcome = await checkSync({ cryptoKey, api: createApiClient() }, tasksRef.current)
+      setSyncStatus(applySyncOutcome(outcome, { onApplyRemoteSnapshot: applyRemoteSnapshot }))
+    } catch (error) {
+      setSyncStatus({ kind: 'error', message: describeSyncError(error) })
+    }
+  }, [cryptoKey, applyRemoteSnapshot])
+
+  useEffect(() => {
+    if (!cryptoKey) return
+    const timer = setTimeout(runAutoSync, AUTO_SYNC_DEBOUNCE_MS)
+    return () => clearTimeout(timer)
+    // Debounced on every task change so rapid edits collapse into one sync.
+  }, [cryptoKey, tasks, runAutoSync])
+
+  useEffect(() => {
+    if (!cryptoKey) return
+    const interval = setInterval(runAutoSync, AUTO_SYNC_INTERVAL_MS)
+    return () => clearInterval(interval)
+    // Periodic re-check catches remote-only changes (e.g. another device),
+    // deliberately not re-armed on every task edit — see tasksRef above.
+  }, [cryptoKey, runAutoSync])
 
   const visibleTasks = useMemo(() => {
     const filtered = filterTasks(tasks, view)
@@ -77,7 +138,7 @@ function App() {
     event.preventDefault()
     const next = addTask(tasks, draft)
     if (next !== tasks) {
-      setTasks(next)
+      applyLocalChange(next)
       setDraft('')
       setView('inbox')
     }
@@ -88,6 +149,15 @@ function App() {
     setSelectedId(null)
     setSidebarOpen(false)
   }
+
+  function openSyncPanel() {
+    setSelectedId(null)
+    setSyncPanelOpen(true)
+    setSidebarOpen(false)
+  }
+
+  const syncConfigured = isConfigured()
+  const syncStatusView = describeSyncStatus(syncStatus, syncConfigured)
 
   return (
     <div className="app-shell">
@@ -115,7 +185,7 @@ function App() {
 
         <div className="sidebar-footer">
           <div className="progress-card"><div><span>Weekly progress</span><strong>{completion}%</strong></div><div className="progress-track"><i style={{ width: `${completion}%` }} /></div><small>{completedCount} completed · {openCount} remaining</small></div>
-          <button><Cloud size={16} /><span>S3 Backup</span><em>Not configured</em></button>
+          <button onClick={openSyncPanel}><Cloud size={16} /><span>S3 Backup</span><em>{syncConfigured ? 'Configured' : 'Not configured'}</em></button>
           <button><Settings size={16} /><span>Settings</span><ChevronRight size={14} /></button>
         </div>
       </aside>
@@ -126,7 +196,7 @@ function App() {
         <header className="topbar">
           <button className="icon-button mobile-menu" onClick={() => setSidebarOpen(true)} aria-label="Open navigation"><Menu size={19} /></button>
           <div className="search-wrap"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search tasks…" aria-label="Search tasks" /><kbd>⌘ K</kbd></div>
-          <div className="sync-status"><i />Local changes saved</div>
+          <div className={`sync-status ${syncStatusView.className}`}><i />{syncStatusView.label}</div>
           <button className="avatar" aria-label="Account">NP</button>
         </header>
 
@@ -144,8 +214,8 @@ function App() {
 
           <div className="task-list">
             {visibleTasks.map((task) => (
-              <article key={task.id} className={`task-row ${selectedId === task.id ? 'selected' : ''}`} onClick={() => setSelectedId(task.id)}>
-                <button className={`complete-button priority-${task.priority}`} onClick={(event) => { event.stopPropagation(); setTasks(task.status === 'completed' ? reopenTask(tasks, task.id) : completeTask(tasks, task.id)) }} aria-label={task.status === 'completed' ? `Reopen ${task.title}` : `Complete ${task.title}`}>
+              <article key={task.id} className={`task-row ${selectedId === task.id ? 'selected' : ''}`} onClick={() => { setSelectedId(task.id); setSyncPanelOpen(false) }}>
+                <button className={`complete-button priority-${task.priority}`} onClick={(event) => { event.stopPropagation(); applyLocalChange(task.status === 'completed' ? reopenTask(tasks, task.id) : completeTask(tasks, task.id)) }} aria-label={task.status === 'completed' ? `Reopen ${task.title}` : `Complete ${task.title}`}>
                   {task.status === 'completed' ? <Check size={14} /> : <Circle size={17} />}
                 </button>
                 <div className="task-copy"><h3 className={task.status === 'completed' ? 'done' : ''}>{task.title}</h3><div><span><i style={{ background: projectColors[task.project] ?? '#8a8f98' }} />{task.project}</span>{task.dueDate && <span className="due"><CalendarDays size={13} />{formatDueDate(task.dueDate)}</span>}{task.priority !== 'none' && <span className={`priority-label ${task.priority}`}>{task.priority}</span>}</div></div>
@@ -160,15 +230,27 @@ function App() {
       {selected && <aside className="detail-panel">
         <div className="detail-header"><span>Task details</span><button className="icon-button" onClick={() => setSelectedId(null)} aria-label="Close task details"><X size={18} /></button></div>
         <div className="detail-body">
-          <button className={`large-check priority-${selected.priority}`} onClick={() => setTasks(selected.status === 'completed' ? reopenTask(tasks, selected.id) : completeTask(tasks, selected.id))}>{selected.status === 'completed' && <Check size={16} />}</button>
-          <textarea className="title-editor" value={selected.title} onChange={(event) => setTasks(updateTask(tasks, { ...selected, title: event.target.value }))} aria-label="Task title" />
-          <label>Project<select value={selected.project} onChange={(event) => setTasks(updateTask(tasks, { ...selected, project: event.target.value }))}>{['Inbox', 'Personal', 'DevOps', 'GetDone'].map((project) => <option key={project}>{project}</option>)}</select></label>
-          <label>Due date<input type="date" value={selected.dueDate ?? ''} onChange={(event) => setTasks(updateTask(tasks, { ...selected, dueDate: event.target.value || undefined }))} /></label>
-          <label>Priority<select value={selected.priority} onChange={(event) => setTasks(updateTask(tasks, { ...selected, priority: event.target.value as Task['priority'] }))}><option value="none">None</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></label>
-          <label>Notes<textarea className="note-editor" value={selected.note ?? ''} placeholder="Add notes…" onChange={(event) => setTasks(updateTask(tasks, { ...selected, note: event.target.value }))} /></label>
+          <button className={`large-check priority-${selected.priority}`} onClick={() => applyLocalChange(selected.status === 'completed' ? reopenTask(tasks, selected.id) : completeTask(tasks, selected.id))}>{selected.status === 'completed' && <Check size={16} />}</button>
+          <textarea className="title-editor" value={selected.title} onChange={(event) => applyLocalChange(updateTask(tasks, { ...selected, title: event.target.value }))} aria-label="Task title" />
+          <label>Project<select value={selected.project} onChange={(event) => applyLocalChange(updateTask(tasks, { ...selected, project: event.target.value }))}>{['Inbox', 'Personal', 'DevOps', 'GetDone'].map((project) => <option key={project}>{project}</option>)}</select></label>
+          <label>Due date<input type="date" value={selected.dueDate ?? ''} onChange={(event) => applyLocalChange(updateTask(tasks, { ...selected, dueDate: event.target.value || undefined }))} /></label>
+          <label>Priority<select value={selected.priority} onChange={(event) => applyLocalChange(updateTask(tasks, { ...selected, priority: event.target.value as Task['priority'] }))}><option value="none">None</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></label>
+          <label>Notes<textarea className="note-editor" value={selected.note ?? ''} placeholder="Add notes…" onChange={(event) => applyLocalChange(updateTask(tasks, { ...selected, note: event.target.value }))} /></label>
         </div>
-        <div className="detail-footer"><button className="delete-button" onClick={() => { setTasks(deleteTask(tasks, selected.id)); setSelectedId(null) }}><Trash2 size={15} /> Delete task</button></div>
+        <div className="detail-footer"><button className="delete-button" onClick={() => { applyLocalChange(deleteTask(tasks, selected.id)); setSelectedId(null) }}><Trash2 size={15} /> Delete task</button></div>
       </aside>}
+
+      {syncPanelOpen && (
+        <SyncPanel
+          tasks={tasks}
+          status={syncStatus}
+          onStatusChange={setSyncStatus}
+          onApplyRemoteSnapshot={applyRemoteSnapshot}
+          cryptoKey={cryptoKey}
+          onUnlock={setCryptoKey}
+          onClose={() => setSyncPanelOpen(false)}
+        />
+      )}
     </div>
   )
 }

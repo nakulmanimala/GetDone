@@ -1,9 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { Task } from '../domain/tasks'
-import { AuthError, type ApiClient, type SnapshotEnvelope } from './apiClient'
-import { deriveKey, encryptSnapshot, generateSaltBase64 } from './crypto'
+import { AuthError, type ApiClient, type SnapshotPayload } from './apiClient'
 import { applySyncOutcome, backupNow, checkSync, describeSyncError, restoreFromS3, type SyncSession } from './syncActions'
-import { getLastSyncedAt, setSalt, setUpdatedAt } from './syncMeta'
+import { getLastSyncedAt, setUpdatedAt } from './syncMeta'
 
 const T1 = '2026-08-14T00:00:00.000Z'
 
@@ -23,48 +22,37 @@ function fakeApi(overrides: Partial<ApiClient> = {}): ApiClient {
 describe('syncActions', () => {
   let session: SyncSession
 
-  beforeEach(async () => {
+  beforeEach(() => {
     localStorage.clear()
-    const salt = generateSaltBase64()
-    setSalt(salt)
-    session = { cryptoKey: await deriveKey('test passphrase', salt), api: fakeApi() }
+    session = { api: fakeApi() }
   })
 
   it('checkSync pushes on first-ever backup', async () => {
     setUpdatedAt(T1)
-    let pushedEnvelope: SnapshotEnvelope | undefined
-    session.api = fakeApi({ putSnapshot: async (envelope) => { pushedEnvelope = envelope } })
+    let pushedPayload: SnapshotPayload | undefined
+    session.api = fakeApi({ putSnapshot: async (payload) => { pushedPayload = payload } })
 
     const outcome = await checkSync(session, tasks)
 
     expect(outcome.status).toBe('pushed')
-    expect(pushedEnvelope?.updatedAt).toBe(T1)
+    expect(pushedPayload?.updatedAt).toBe(T1)
   })
 
   it('backupNow uploads the current tasks and stamps lastSyncedAt', async () => {
     setUpdatedAt(T1)
-    let pushedEnvelope: SnapshotEnvelope | undefined
-    session.api = fakeApi({ putSnapshot: async (envelope) => { pushedEnvelope = envelope } })
+    let pushedPayload: SnapshotPayload | undefined
+    session.api = fakeApi({ putSnapshot: async (payload) => { pushedPayload = payload } })
 
     const updatedAt = await backupNow(session, tasks)
 
     expect(updatedAt).toBe(T1)
-    expect(pushedEnvelope?.updatedAt).toBe(T1)
+    expect(pushedPayload).toEqual({ updatedAt: T1, tasks })
     expect(getLastSyncedAt()).toBe(T1)
   })
 
-  it('restoreFromS3 decrypts the remote snapshot and stamps lastSyncedAt', async () => {
-    const { ciphertext, iv } = await encryptSnapshot(session.cryptoKey, JSON.stringify(tasks))
-    const envelope: SnapshotEnvelope = {
-      schemaVersion: 1,
-      kdfName: 'PBKDF2-SHA256',
-      kdfIterations: 250_000,
-      salt: 'unused',
-      iv,
-      updatedAt: T1,
-      ciphertext,
-    }
-    session.api = fakeApi({ fetchSnapshot: async () => envelope })
+  it('restoreFromS3 returns the remote snapshot and stamps lastSyncedAt', async () => {
+    const payload: SnapshotPayload = { updatedAt: T1, tasks }
+    session.api = fakeApi({ fetchSnapshot: async () => payload })
 
     const result = await restoreFromS3(session)
 

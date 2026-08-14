@@ -44,6 +44,7 @@ services:
       - S3_BUCKET=${S3_BUCKET}
       - S3_SNAPSHOT_KEY=${S3_SNAPSHOT_KEY:-getdone/snapshot.json.enc}
       - SYNC_API_TOKEN=${SYNC_API_TOKEN}
+      - SYNC_ENCRYPTION_KEY=${SYNC_ENCRYPTION_KEY}
       - PORT=8081
     volumes:
       - ${HOME}/.aws:/home/getdone/.aws:ro

@@ -4,11 +4,11 @@ import {
   pullSnapshot,
   pushSnapshot,
   runSync,
-  type EncryptedPullDeps,
-  type EncryptedPushDeps,
   type LocalSyncState,
+  type PullDeps,
+  type PushDeps,
 } from './snapshotSync'
-import type { SnapshotEnvelope, SnapshotMeta } from './apiClient'
+import type { SnapshotMeta, SnapshotPayload } from './apiClient'
 
 const T0 = '2026-08-01T00:00:00.000Z'
 const T1 = '2026-08-14T00:00:00.000Z'
@@ -52,56 +52,29 @@ describe('decideSyncAction', () => {
 })
 
 describe('pushSnapshot', () => {
-  it('encrypts the tasks json and puts the resulting envelope', async () => {
-    let putEnvelope: SnapshotEnvelope | undefined
-    const deps: EncryptedPushDeps = {
-      putSnapshot: async (envelope) => {
-        putEnvelope = envelope
+  it('puts the parsed tasks alongside the updatedAt watermark', async () => {
+    let putPayload: SnapshotPayload | undefined
+    const deps: PushDeps = {
+      putSnapshot: async (payload) => {
+        putPayload = payload
       },
-      encrypt: async (plaintext) => ({ ciphertext: `enc(${plaintext})`, iv: 'fake-iv' }),
-      saltBase64: 'fake-salt',
-      kdfIterations: 250_000,
     }
 
     await pushSnapshot(deps, '[{"id":"1"}]', T1)
 
-    expect(putEnvelope).toEqual({
-      schemaVersion: 1,
-      kdfName: 'PBKDF2-SHA256',
-      kdfIterations: 250_000,
-      salt: 'fake-salt',
-      iv: 'fake-iv',
-      updatedAt: T1,
-      ciphertext: 'enc([{"id":"1"}])',
-    })
+    expect(putPayload).toEqual({ updatedAt: T1, tasks: [{ id: '1' }] })
   })
 })
 
 describe('pullSnapshot', () => {
   it('returns null when no snapshot exists', async () => {
-    const deps: EncryptedPullDeps = {
-      fetchSnapshot: async () => null,
-      decrypt: async () => {
-        throw new Error('should not be called')
-      },
-    }
+    const deps: PullDeps = { fetchSnapshot: async () => null }
     expect(await pullSnapshot(deps)).toBeNull()
   })
 
-  it('decrypts the fetched envelope', async () => {
-    const envelope: SnapshotEnvelope = {
-      schemaVersion: 1,
-      kdfName: 'PBKDF2-SHA256',
-      kdfIterations: 250_000,
-      salt: 'fake-salt',
-      iv: 'fake-iv',
-      updatedAt: T1,
-      ciphertext: 'enc([{"id":"1"}])',
-    }
-    const deps: EncryptedPullDeps = {
-      fetchSnapshot: async () => envelope,
-      decrypt: async (ciphertext) => ciphertext.replace('enc(', '').replace(')', ''),
-    }
+  it('stringifies the fetched tasks', async () => {
+    const payload: SnapshotPayload = { updatedAt: T1, tasks: [{ id: '1' }] }
+    const deps: PullDeps = { fetchSnapshot: async () => payload }
 
     expect(await pullSnapshot(deps)).toEqual({ tasksJson: '[{"id":"1"}]', updatedAt: T1 })
   })
@@ -112,11 +85,7 @@ describe('runSync', () => {
     return {
       fetchMeta: async (): Promise<SnapshotMeta> => ({ exists: false, updatedAt: null }),
       putSnapshot: async () => {},
-      encrypt: async (plaintext: string) => ({ ciphertext: `enc(${plaintext})`, iv: 'fake-iv' }),
       fetchSnapshot: async () => null,
-      decrypt: async (ciphertext: string) => ciphertext.replace('enc(', '').replace(')', ''),
-      saltBase64: 'fake-salt',
-      kdfIterations: 250_000,
       local: { updatedAt: T1, lastSyncedAt: null } as LocalSyncState,
       tasksJson: '[{"id":"1"}]',
       now: () => new Date(T1),
@@ -125,27 +94,19 @@ describe('runSync', () => {
   }
 
   it('pushes on first-ever backup', async () => {
-    let pushed: SnapshotEnvelope | undefined
-    const outcome = await runSync(baseDeps({ putSnapshot: async (envelope) => { pushed = envelope } }))
+    let pushed: SnapshotPayload | undefined
+    const outcome = await runSync(baseDeps({ putSnapshot: async (payload) => { pushed = payload } }))
     expect(outcome).toEqual({ status: 'pushed' })
     expect(pushed?.updatedAt).toBe(T1)
   })
 
-  it('pulls and returns decrypted tasks when only remote changed', async () => {
-    const envelope: SnapshotEnvelope = {
-      schemaVersion: 1,
-      kdfName: 'PBKDF2-SHA256',
-      kdfIterations: 250_000,
-      salt: 'fake-salt',
-      iv: 'fake-iv',
-      updatedAt: T1,
-      ciphertext: 'enc([{"id":"remote"}])',
-    }
+  it('pulls and returns tasks when only remote changed', async () => {
+    const payload: SnapshotPayload = { updatedAt: T1, tasks: [{ id: 'remote' }] }
     const outcome = await runSync(
       baseDeps({
         local: { updatedAt: T0, lastSyncedAt: T0 },
         fetchMeta: async () => ({ exists: true, updatedAt: T1 }),
-        fetchSnapshot: async () => envelope,
+        fetchSnapshot: async () => payload,
       }),
     )
     expect(outcome).toEqual({ status: 'pulled', tasksJson: '[{"id":"remote"}]', updatedAt: T1 })

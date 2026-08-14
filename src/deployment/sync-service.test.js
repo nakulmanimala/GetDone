@@ -44,6 +44,7 @@ describe('sync backend service', () => {
     expect(envExample).toContain('S3_BUCKET=')
     expect(envExample).toContain('S3_SNAPSHOT_KEY=')
     expect(envExample).toContain('SYNC_API_TOKEN=')
+    expect(envExample).toContain('SYNC_ENCRYPTION_KEY=')
     expect(envExample).toContain('AWS_PROFILE=')
   })
 })

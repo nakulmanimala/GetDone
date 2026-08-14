@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { SyncPanel } from './SyncPanel'
-import { setApiToken, setConfigured, setSalt } from './syncMeta'
+import { setApiToken, setConfigured } from './syncMeta'
 import type { SyncStatus } from './syncStatus'
 import type { Task } from '../domain/tasks'
 
@@ -13,7 +13,7 @@ const tasks: Task[] = [
 
 function noop() {}
 
-// Mirrors how App.tsx holds cryptoKey/status so onUnlock/onStatusChange updates re-render the panel.
+// Mirrors how App.tsx holds status so onStatusChange updates re-render the panel.
 function Harness({
   initialStatus = { kind: 'idle' },
   onApplyRemoteSnapshot = noop,
@@ -21,7 +21,6 @@ function Harness({
   initialStatus?: SyncStatus
   onApplyRemoteSnapshot?: (tasks: Task[], updatedAt: string) => void
 }) {
-  const [cryptoKey, setCryptoKey] = useState<CryptoKey | null>(null)
   const [status, setStatus] = useState<SyncStatus>(initialStatus)
   return (
     <SyncPanel
@@ -29,8 +28,7 @@ function Harness({
       status={status}
       onStatusChange={setStatus}
       onApplyRemoteSnapshot={onApplyRemoteSnapshot}
-      cryptoKey={cryptoKey}
-      onUnlock={setCryptoKey}
+      onConfigured={noop}
       onClose={noop}
     />
   )
@@ -39,16 +37,15 @@ function Harness({
 describe('SyncPanel', () => {
   beforeEach(() => localStorage.clear())
 
-  it('shows the no-recovery warning before first-time setup', () => {
+  it('shows only the API token setup form before first-time setup, no passphrase', () => {
     render(<Harness />)
-    expect(screen.getByText(/no password recovery/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/api token/i)).toBeInTheDocument()
+    expect(screen.queryByLabelText(/passphrase/i)).not.toBeInTheDocument()
   })
 
-  it('renders the conflict banner with Keep local / Keep S3 actions once unlocked', async () => {
+  it('renders the conflict banner with Keep local / Keep S3 actions once configured', () => {
     setConfigured(true)
-    setSalt('c2FsdA==')
     setApiToken('token')
-    const user = userEvent.setup()
 
     render(
       <Harness
@@ -56,32 +53,23 @@ describe('SyncPanel', () => {
       />,
     )
 
-    // Unlock first — the conflict banner only renders once a passphrase key is derived.
-    await user.type(screen.getByLabelText(/passphrase/i), 'correct horse battery staple')
-    await user.click(screen.getByRole('button', { name: /unlock/i }))
-
-    expect(await screen.findByText(/both changed since the last sync/i)).toBeInTheDocument()
+    expect(screen.getByText(/both changed since the last sync/i)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /keep local/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /keep s3/i })).toBeInTheDocument()
   })
 
-  it('shows the auto backup hint once unlocked', async () => {
+  it('shows the auto backup hint once configured, with no unlock step', () => {
     setConfigured(true)
-    setSalt('c2FsdA==')
     setApiToken('token')
-    const user = userEvent.setup()
 
     render(<Harness />)
 
-    await user.type(screen.getByLabelText(/passphrase/i), 'correct horse battery staple')
-    await user.click(screen.getByRole('button', { name: /unlock/i }))
-
-    expect(await screen.findByText(/auto backup is on/i)).toBeInTheDocument()
+    expect(screen.getByText(/auto backup is on/i)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /unlock/i })).not.toBeInTheDocument()
   })
 
   it('requires confirmation before restoring over local tasks', async () => {
     setConfigured(true)
-    setSalt('c2FsdA==')
     setApiToken('token')
     const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
     const onApplyRemoteSnapshot = vi.fn()
@@ -89,12 +77,31 @@ describe('SyncPanel', () => {
 
     render(<Harness onApplyRemoteSnapshot={onApplyRemoteSnapshot} />)
 
-    await user.type(screen.getByLabelText(/passphrase/i), 'correct horse battery staple')
-    await user.click(screen.getByRole('button', { name: /unlock/i }))
-    await user.click(await screen.findByRole('button', { name: /restore from s3/i }))
+    await user.click(screen.getByRole('button', { name: /restore from s3/i }))
 
     expect(confirmSpy).toHaveBeenCalled()
     expect(onApplyRemoteSnapshot).not.toHaveBeenCalled()
     confirmSpy.mockRestore()
+  })
+
+  it('calls onConfigured after submitting the setup form', async () => {
+    const onConfigured = vi.fn()
+    const user = userEvent.setup()
+
+    render(
+      <SyncPanel
+        tasks={tasks}
+        status={{ kind: 'idle' }}
+        onStatusChange={noop}
+        onApplyRemoteSnapshot={noop}
+        onConfigured={onConfigured}
+        onClose={noop}
+      />,
+    )
+
+    await user.type(screen.getByLabelText(/api token/i), 'my-token')
+    await user.click(screen.getByRole('button', { name: /set up s3 backup/i }))
+
+    expect(onConfigured).toHaveBeenCalled()
   })
 })

@@ -1,7 +1,6 @@
 const KEYS = {
   updatedAt: 'getdone.sync.updatedAt.v1',
   lastSyncedAt: 'getdone.sync.lastSyncedAt.v1',
-  salt: 'getdone.sync.salt.v1',
   apiToken: 'getdone.sync.apiToken.v1',
   configured: 'getdone.sync.configured.v1',
 } as const
@@ -24,14 +23,6 @@ export function getLastSyncedAt(): string | null {
 
 export function setLastSyncedAt(value: string): void {
   localStorage.setItem(KEYS.lastSyncedAt, value)
-}
-
-export function getSalt(): string | null {
-  return localStorage.getItem(KEYS.salt)
-}
-
-export function setSalt(value: string): void {
-  localStorage.setItem(KEYS.salt, value)
 }
 
 export function getApiToken(): string | null {

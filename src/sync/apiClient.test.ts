@@ -1,18 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { AuthError, NotFoundError, ServerError, createApiClient, type SnapshotEnvelope } from './apiClient'
+import { AuthError, NotFoundError, ServerError, createApiClient, type SnapshotPayload } from './apiClient'
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
 }
 
-const envelope: SnapshotEnvelope = {
-  schemaVersion: 1,
-  kdfName: 'PBKDF2-SHA256',
-  kdfIterations: 250_000,
-  salt: 'c2FsdA==',
-  iv: 'aXY=',
+const payload: SnapshotPayload = {
   updatedAt: '2026-08-14T00:00:00.000Z',
-  ciphertext: 'Y2lwaGVydGV4dA==',
+  tasks: [{ id: '1', title: 'Buy milk' }],
 }
 
 describe('createApiClient', () => {
@@ -42,9 +37,9 @@ describe('createApiClient', () => {
     expect(await client.fetchSnapshot()).toBeNull()
   })
 
-  it('fetchSnapshot returns the envelope on success', async () => {
-    const client = createApiClient({ fetchFn: async () => jsonResponse(200, envelope) })
-    expect(await client.fetchSnapshot()).toEqual(envelope)
+  it('fetchSnapshot returns the payload on success', async () => {
+    const client = createApiClient({ fetchFn: async () => jsonResponse(200, payload) })
+    expect(await client.fetchSnapshot()).toEqual(payload)
   })
 
   it('throws AuthError on 401', async () => {
@@ -57,7 +52,7 @@ describe('createApiClient', () => {
     await expect(client.fetchMeta()).rejects.toBeInstanceOf(ServerError)
   })
 
-  it('putSnapshot sends the envelope as the request body', async () => {
+  it('putSnapshot sends the payload as the request body', async () => {
     let capturedBody: string | null = null
     const client = createApiClient({
       fetchFn: async (_url, init) => {
@@ -66,8 +61,8 @@ describe('createApiClient', () => {
       },
     })
 
-    await client.putSnapshot(envelope)
-    expect(JSON.parse(capturedBody!)).toEqual(envelope)
+    await client.putSnapshot(payload)
+    expect(JSON.parse(capturedBody!)).toEqual(payload)
   })
 
   it('NotFoundError is exported for other call sites to distinguish 404s', () => {

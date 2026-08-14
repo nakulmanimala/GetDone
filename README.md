@@ -25,7 +25,7 @@ Full per-task, multi-device operation-log synchronization (merging simultaneous 
 cp .env.example .env
 ```
 
-Fill in `.env` before starting the stack — at minimum `S3_BUCKET` and `SYNC_API_TOKEN` if you want S3 backup (see below); the app runs fine without them, with S3 Backup shown as *Not configured*.
+Fill in `.env` before starting the stack — at minimum `S3_BUCKET`, `SYNC_API_TOKEN`, and `SYNC_ENCRYPTION_KEY` if you want S3 backup (see below); the app runs fine without them, with S3 Backup shown as *Not configured*.
 
 ```bash
 docker compose up -d --build
@@ -127,14 +127,16 @@ S3 synchronization runs through a separate `sync` Compose service (`backend/`) b
    **Turn on bucket versioning.** GetDone stores one object; versioning is what lets you recover a previous snapshot if a sync conflict is resolved the wrong way (see below). This can't be enabled from the app — set it on the bucket itself.
 
 2. Make sure `~/.aws/credentials` and `~/.aws/config` on the Docker host have a profile that can assume that policy.
-3. Fill in `.env`: `AWS_PROFILE`, `AWS_REGION`, `S3_BUCKET`, and a `SYNC_API_TOKEN` (generate one with `openssl rand -hex 32`). `S3_SNAPSHOT_KEY` defaults to `getdone/snapshot.json.enc`.
-4. `docker compose up -d --build`, then open the app, click **S3 Backup** in the sidebar, and set a passphrase and paste in the same `SYNC_API_TOKEN`.
+3. Fill in `.env`: `AWS_PROFILE`, `AWS_REGION`, `S3_BUCKET`, a `SYNC_API_TOKEN` (generate one with `openssl rand -hex 32`), and a `SYNC_ENCRYPTION_KEY` (generate one with `openssl rand -base64 32`). `S3_SNAPSHOT_KEY` defaults to `getdone/snapshot.json.enc`.
+4. `docker compose up -d --build`, then open the app, click **S3 Backup** in the sidebar, and paste in the same `SYNC_API_TOKEN`. That's it — no passphrase to set, backups sync automatically from here.
 
 `SYNC_API_TOKEN` is a *different, lower-stakes* secret from your AWS credentials — it only authenticates the browser to your own self-hosted `sync` container (there's no user-account system), and is stored in the browser's `localStorage`. AWS access keys never leave the `sync` container: they're read from the read-only `${HOME}/.aws:/home/getdone/.aws:ro` mount via the AWS SDK's default credential chain, selecting the profile named by `AWS_PROFILE`.
 
 ### Encryption
 
-The passphrase you set in the S3 Backup panel never leaves the browser. It's run through PBKDF2 to derive an AES-GCM key (Web Crypto), which encrypts the task list before it's sent anywhere — the `sync` backend and S3 only ever handle ciphertext. **There is no passphrase recovery.** If you forget it, that backup can never be decrypted again; the app warns about this before you set one.
+Snapshots are encrypted at rest with AES-256-GCM, but the key lives entirely on the `sync` backend (from `SYNC_ENCRYPTION_KEY`), not derived from anything you type — there's no passphrase, no "unlock" step, and nothing to forget. The browser sends the task list to `sync` over the already-authenticated `/api/snapshot` route as plain JSON; `sync` encrypts it before writing to S3 and decrypts it on read. This trades away the stronger guarantee of the old client-side-passphrase design (there, not even a compromised backend could read your tasks) for zero friction — anyone with access to the `sync` container or its `SYNC_ENCRYPTION_KEY` can decrypt your backups, same trust boundary as the AWS credentials already sitting there.
+
+> **Upgrading from an older version**: snapshots pushed under the previous passphrase-based scheme use a different key and envelope format and can't be decrypted by this backend. They're not lost — your tasks are still local — but that S3 object is orphaned. Open S3 Backup and click **Back Up Now** to replace it with a fresh snapshot in the new format.
 
 ### How sync works
 
@@ -148,11 +150,10 @@ This is why bucket versioning matters: whichever side you don't keep in a confli
 
 ### Auto backup
 
-Once you unlock S3 Backup with your passphrase for the current browser session, syncing happens automatically — no need to click **Back Up Now** after every change:
+As soon as S3 Backup is configured (the `SYNC_API_TOKEN` is set), syncing happens automatically — no unlock step, no need to click **Back Up Now** after every change:
 
 - A few seconds after any local edit, the app runs the same watermark check above and pushes, pulls, or flags a conflict as needed.
 - Every 5 minutes it also checks in the background, so changes pushed from another device get pulled in even if you haven't touched this one.
-- The passphrase itself is **never persisted** — it only lives in memory for that browser tab's session. Auto backup runs only after you've unlocked; it won't sync anything before that, and closing the tab (or reloading) requires unlocking again. This is a deliberate tradeoff for the no-recovery encryption model above.
 - A conflict still pauses auto-sync and waits for you to resolve it in the S3 Backup panel — it's never auto-resolved.
 
 ## Security notes
@@ -165,6 +166,6 @@ Both the `web` and `sync` containers:
 - Enable `no-new-privileges`.
 - Provide `/healthz` for orchestration checks.
 
-`web` exposes its internal port `8080` through the selected host port; `sync` has **no host port at all** — it's reachable only from `web` over the internal Compose network, and AWS credentials never leave it. `sync`'s `~/.aws` mount is read-only, and it refuses to start if `S3_BUCKET` or `SYNC_API_TOKEN` is missing.
+`web` exposes its internal port `8080` through the selected host port; `sync` has **no host port at all** — it's reachable only from `web` over the internal Compose network, and AWS credentials never leave it. `sync`'s `~/.aws` mount is read-only, and it refuses to start if `S3_BUCKET`, `SYNC_API_TOKEN`, or a valid `SYNC_ENCRYPTION_KEY` is missing.
 
 Use HTTPS through a reverse proxy before exposing GetDone outside a trusted LAN.

@@ -2,13 +2,11 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import {
   getApiToken,
   getLastSyncedAt,
-  getSalt,
   getUpdatedAt,
   isConfigured,
   setApiToken,
   setConfigured,
   setLastSyncedAt,
-  setSalt,
   setUpdatedAt,
   touchUpdatedAt,
 } from './syncMeta'
@@ -31,12 +29,6 @@ describe('syncMeta', () => {
     expect(getLastSyncedAt()).toBeNull()
     setLastSyncedAt('2026-08-14T00:00:00.000Z')
     expect(getLastSyncedAt()).toBe('2026-08-14T00:00:00.000Z')
-  })
-
-  it('round trips the salt', () => {
-    expect(getSalt()).toBeNull()
-    setSalt('c2FsdA==')
-    expect(getSalt()).toBe('c2FsdA==')
   })
 
   it('round trips the api token', () => {

@@ -1,4 +1,4 @@
-import type { SnapshotEnvelope, SnapshotMeta } from './apiClient'
+import type { SnapshotMeta, SnapshotPayload } from './apiClient'
 
 export type SyncDecision = 'up-to-date' | 'pull' | 'push' | 'conflict'
 
@@ -30,29 +30,16 @@ function isNewer(candidate: string | null, baseline: string | null): boolean {
   return new Date(candidate).getTime() > new Date(baseline).getTime()
 }
 
-export interface EncryptedPushDeps {
-  putSnapshot: (envelope: SnapshotEnvelope) => Promise<void>
-  encrypt: (plaintext: string) => Promise<{ ciphertext: string; iv: string }>
-  saltBase64: string
-  kdfIterations: number
+export interface PushDeps {
+  putSnapshot: (payload: SnapshotPayload) => Promise<void>
 }
 
-export async function pushSnapshot(deps: EncryptedPushDeps, tasksJson: string, updatedAt: string): Promise<void> {
-  const { ciphertext, iv } = await deps.encrypt(tasksJson)
-  await deps.putSnapshot({
-    schemaVersion: 1,
-    kdfName: 'PBKDF2-SHA256',
-    kdfIterations: deps.kdfIterations,
-    salt: deps.saltBase64,
-    iv,
-    updatedAt,
-    ciphertext,
-  })
+export async function pushSnapshot(deps: PushDeps, tasksJson: string, updatedAt: string): Promise<void> {
+  await deps.putSnapshot({ updatedAt, tasks: JSON.parse(tasksJson) })
 }
 
-export interface EncryptedPullDeps {
-  fetchSnapshot: () => Promise<SnapshotEnvelope | null>
-  decrypt: (ciphertext: string, iv: string) => Promise<string>
+export interface PullDeps {
+  fetchSnapshot: () => Promise<SnapshotPayload | null>
 }
 
 export interface PulledSnapshot {
@@ -60,11 +47,10 @@ export interface PulledSnapshot {
   updatedAt: string
 }
 
-export async function pullSnapshot(deps: EncryptedPullDeps): Promise<PulledSnapshot | null> {
-  const envelope = await deps.fetchSnapshot()
-  if (!envelope) return null
-  const tasksJson = await deps.decrypt(envelope.ciphertext, envelope.iv)
-  return { tasksJson, updatedAt: envelope.updatedAt }
+export async function pullSnapshot(deps: PullDeps): Promise<PulledSnapshot | null> {
+  const payload = await deps.fetchSnapshot()
+  if (!payload) return null
+  return { tasksJson: JSON.stringify(payload.tasks), updatedAt: payload.updatedAt }
 }
 
 export type SyncOutcome =
@@ -73,7 +59,7 @@ export type SyncOutcome =
   | { status: 'pulled'; tasksJson: string; updatedAt: string }
   | { status: 'conflict'; localUpdatedAt: string | null; remoteUpdatedAt: string | null }
 
-export interface RunSyncDeps extends EncryptedPushDeps, EncryptedPullDeps {
+export interface RunSyncDeps extends PushDeps, PullDeps {
   fetchMeta: () => Promise<SnapshotMeta>
   local: LocalSyncState
   tasksJson: string

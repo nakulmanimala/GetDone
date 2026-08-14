@@ -74,7 +74,7 @@ function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [syncPanelOpen, setSyncPanelOpen] = useState(false)
   const [syncStatus, setSyncStatus] = useState<SyncStatus>({ kind: 'idle' })
-  const [cryptoKey, setCryptoKey] = useState<CryptoKey | null>(null)
+  const [syncConfigured, setSyncConfigured] = useState(isConfigured())
   const [storageFull, setStorageFull] = useState(false)
   const [lightboxImage, setLightboxImage] = useState<string | null>(null)
 
@@ -93,9 +93,9 @@ function App() {
     setLastSyncedAt(remoteUpdatedAt)
   }, [])
 
-  // Auto backup: once unlocked, keeps running in the background even while
-  // the sync panel is closed — cryptoKey lives here, not inside SyncPanel,
-  // specifically so it survives the panel unmounting.
+  // Auto backup: once configured, keeps running in the background even while
+  // the sync panel is closed — syncConfigured lives here, not inside
+  // SyncPanel, specifically so it survives the panel unmounting.
   const tasksRef = useRef(tasks)
   useEffect(() => {
     tasksRef.current = tasks
@@ -122,30 +122,30 @@ function App() {
   }, [selectedId, applyLocalChange])
 
   const runAutoSync = useCallback(async () => {
-    if (!cryptoKey) return
+    if (!syncConfigured) return
     setSyncStatus({ kind: 'working', label: 'Syncing…' })
     try {
-      const outcome = await checkSync({ cryptoKey, api: createApiClient() }, tasksRef.current)
+      const outcome = await checkSync({ api: createApiClient() }, tasksRef.current)
       setSyncStatus(applySyncOutcome(outcome, { onApplyRemoteSnapshot: applyRemoteSnapshot }))
     } catch (error) {
       setSyncStatus({ kind: 'error', message: describeSyncError(error) })
     }
-  }, [cryptoKey, applyRemoteSnapshot])
+  }, [syncConfigured, applyRemoteSnapshot])
 
   useEffect(() => {
-    if (!cryptoKey) return
+    if (!syncConfigured) return
     const timer = setTimeout(runAutoSync, AUTO_SYNC_DEBOUNCE_MS)
     return () => clearTimeout(timer)
     // Debounced on every task change so rapid edits collapse into one sync.
-  }, [cryptoKey, tasks, runAutoSync])
+  }, [syncConfigured, tasks, runAutoSync])
 
   useEffect(() => {
-    if (!cryptoKey) return
+    if (!syncConfigured) return
     const interval = setInterval(runAutoSync, AUTO_SYNC_INTERVAL_MS)
     return () => clearInterval(interval)
     // Periodic re-check catches remote-only changes (e.g. another device),
     // deliberately not re-armed on every task edit — see tasksRef above.
-  }, [cryptoKey, runAutoSync])
+  }, [syncConfigured, runAutoSync])
 
   const visibleTasks = useMemo(() => {
     const filtered = filterTasks(tasks, view)
@@ -183,7 +183,6 @@ function App() {
     setSidebarOpen(false)
   }
 
-  const syncConfigured = isConfigured()
   const syncStatusView = describeSyncStatus(syncStatus, syncConfigured)
 
   return (
@@ -295,8 +294,7 @@ function App() {
           status={syncStatus}
           onStatusChange={setSyncStatus}
           onApplyRemoteSnapshot={applyRemoteSnapshot}
-          cryptoKey={cryptoKey}
-          onUnlock={setCryptoKey}
+          onConfigured={() => setSyncConfigured(true)}
           onClose={() => setSyncPanelOpen(false)}
         />
       )}

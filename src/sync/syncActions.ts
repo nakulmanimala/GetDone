@@ -1,38 +1,26 @@
 import type { Task } from '../domain/tasks'
 import { AuthError, NetworkError, ServerError, type ApiClient } from './apiClient'
-import { decryptSnapshot, encryptSnapshot } from './crypto'
 import {
   pullSnapshot,
   pushSnapshot,
   runSync,
-  type EncryptedPullDeps,
-  type EncryptedPushDeps,
+  type PullDeps,
+  type PushDeps,
   type SyncOutcome,
 } from './snapshotSync'
-import { getLastSyncedAt, getSalt, getUpdatedAt, setLastSyncedAt } from './syncMeta'
+import { getLastSyncedAt, getUpdatedAt, setLastSyncedAt } from './syncMeta'
 import type { SyncStatus } from './syncStatus'
 
-const KDF_ITERATIONS = 250_000
-
 export interface SyncSession {
-  cryptoKey: CryptoKey
   api: ApiClient
 }
 
-function pushDeps({ cryptoKey, api }: SyncSession): EncryptedPushDeps {
-  return {
-    putSnapshot: (envelope) => api.putSnapshot(envelope),
-    encrypt: (plaintext) => encryptSnapshot(cryptoKey, plaintext),
-    saltBase64: getSalt()!,
-    kdfIterations: KDF_ITERATIONS,
-  }
+function pushDeps({ api }: SyncSession): PushDeps {
+  return { putSnapshot: (payload) => api.putSnapshot(payload) }
 }
 
-function pullDeps({ cryptoKey, api }: SyncSession): EncryptedPullDeps {
-  return {
-    fetchSnapshot: () => api.fetchSnapshot(),
-    decrypt: (ciphertext, iv) => decryptSnapshot(cryptoKey, ciphertext, iv),
-  }
+function pullDeps({ api }: SyncSession): PullDeps {
+  return { fetchSnapshot: () => api.fetchSnapshot() }
 }
 
 export function checkSync(session: SyncSession, tasks: Task[]): Promise<SyncOutcome> {

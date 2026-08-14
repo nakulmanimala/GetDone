@@ -5,14 +5,9 @@ export class NotFoundError extends Error {}
 export class NetworkError extends Error {}
 export class ServerError extends Error {}
 
-export interface SnapshotEnvelope {
-  schemaVersion: number
-  kdfName: string
-  kdfIterations: number
-  salt: string
-  iv: string
+export interface SnapshotPayload {
   updatedAt: string
-  ciphertext: string
+  tasks: unknown
 }
 
 export interface SnapshotMeta {
@@ -22,8 +17,8 @@ export interface SnapshotMeta {
 
 export interface ApiClient {
   fetchMeta(): Promise<SnapshotMeta>
-  fetchSnapshot(): Promise<SnapshotEnvelope | null>
-  putSnapshot(envelope: SnapshotEnvelope): Promise<void>
+  fetchSnapshot(): Promise<SnapshotPayload | null>
+  putSnapshot(payload: SnapshotPayload): Promise<void>
 }
 
 export interface ApiClientDeps {
@@ -58,17 +53,17 @@ export function createApiClient({ fetchFn = fetch, getToken = getApiToken }: Api
     async fetchSnapshot() {
       try {
         const response = await request('/snapshot')
-        return (await response.json()) as SnapshotEnvelope
+        return (await response.json()) as SnapshotPayload
       } catch (error) {
         if (error instanceof NotFoundError) return null
         throw error
       }
     },
-    async putSnapshot(envelope) {
+    async putSnapshot(payload) {
       await request('/snapshot', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(envelope),
+        body: JSON.stringify(payload),
       })
     },
   }

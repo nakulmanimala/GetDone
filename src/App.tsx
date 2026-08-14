@@ -4,6 +4,7 @@ import {
   Check,
   CheckCircle2,
   ChevronRight,
+  ChevronUp,
   Circle,
   Cloud,
   Menu,
@@ -56,6 +57,14 @@ const AUTO_SYNC_INTERVAL_MS = 5 * 60_000
 const defaultProjects = ['Inbox', 'Personal', 'DevOps', 'GetDone']
 const baseProjectColors: Record<string, string> = { Personal: '#a78bfa', DevOps: '#38bdf8', GetDone: '#34d399', Inbox: '#8a8f98' }
 const projectPalette = ['#7170ff', '#a78bfa', '#38bdf8', '#34d399', '#fbbf24', '#fb7185']
+
+// ISO timestamp <-> the local wall-clock format datetime-local inputs use.
+function isoToLocalInput(iso?: string) {
+  if (!iso) return ''
+  const date = new Date(iso)
+  const pad = (value: number) => String(value).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
 
 function formatDueDate(date?: string) {
   if (!date) return 'No due date'
@@ -202,7 +211,6 @@ function App() {
     [matchesQuery, tasks],
   )
 
-  const selected = tasks.find((task) => task.id === selectedId && !task.deletedAt) ?? null
   const liveTasks = tasks.filter((task) => !task.deletedAt)
   const openCount = liveTasks.filter((task) => task.status === 'open').length
   const completedCount = liveTasks.filter((task) => task.status === 'completed').length
@@ -329,10 +337,98 @@ function App() {
 
   const syncStatusView = describeSyncStatus(syncStatus, syncConfigured)
 
-  const renderRow = (task: Task) => (
+  // Google Tasks-style in-place editing: the expanded row swaps to a full
+  // inline editor inside the column; every field saves as it changes.
+  const renderExpandedRow = (task: Task) => {
+    const patch = (changes: Partial<Task>) => applyLocalChange(updateTask(tasks, { ...task, ...changes }))
+    return (
+      <article key={task.id} className="board-row board-editor">
+        <div className="editor-head">
+          <button className={`complete-button priority-${task.priority}`} onClick={() => toggleComplete(task)} aria-label={task.status === 'completed' ? `Reopen ${task.title}` : `Complete ${task.title}`}>
+            {task.status === 'completed' ? <Check size={14} /> : <Circle size={16} />}
+          </button>
+          <input
+            className="editor-title"
+            value={task.title}
+            onChange={(event) => patch({ title: event.target.value })}
+            aria-label="Task title"
+          />
+          <button className="row-delete" onClick={() => trashTask(task)} aria-label={`Move ${task.title} to the bin`}><Trash2 size={14} /></button>
+          <button
+            className={`star-button ${task.flagged ? 'starred' : ''}`}
+            onClick={() => toggleStar(task)}
+            aria-label={task.flagged ? `Unstar ${task.title}` : `Star ${task.title}`}
+          >
+            <Star size={15} />
+          </button>
+          <button className="star-button" onClick={() => setSelectedId(null)} aria-label="Collapse task"><ChevronUp size={16} /></button>
+        </div>
+
+        <RichNoteEditor
+          key={task.id}
+          initialHtml={task.note ?? ''}
+          placeholder="Details"
+          ariaLabel="Task details"
+          className="note-editor rich-note editor-notes"
+          onChange={(html) => patch({ note: html || undefined })}
+        />
+
+        <div className="editor-grid">
+          <label>List
+            <select value={task.project} onChange={(event) => patch({ project: event.target.value })}>
+              {projects.map((project) => <option key={project}>{project}</option>)}
+            </select>
+          </label>
+          <label>Due date
+            <input type="date" value={task.dueDate ?? ''} onChange={(event) => patch({ dueDate: event.target.value || undefined })} />
+          </label>
+          <label>Reminder
+            <input
+              type="datetime-local"
+              value={isoToLocalInput(task.reminderAt)}
+              onChange={(event) => patch({ reminderAt: event.target.value ? new Date(event.target.value).toISOString() : undefined })}
+            />
+          </label>
+          <label>Repeat
+            <select value={task.repeat ?? 'none'} onChange={(event) => patch({ repeat: event.target.value === 'none' ? undefined : (event.target.value as Task['repeat']) })}>
+              <option value="none">Doesn't repeat</option>
+              <option value="daily">Daily</option>
+              <option value="weekly">Weekly</option>
+              <option value="monthly">Monthly</option>
+            </select>
+          </label>
+          <label>Priority
+            <select value={task.priority} onChange={(event) => patch({ priority: event.target.value as Task['priority'] })}>
+              <option value="none">None</option>
+              <option value="low">Low</option>
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+            </select>
+          </label>
+        </div>
+
+        <div className="editor-images">
+          {task.images?.length ? (
+            <div className="image-grid">
+              {task.images.map((image) => (
+                <div key={image.id} className="image-thumb">
+                  <img src={image.dataUrl} alt="" onClick={() => setLightboxImage(image.dataUrl)} />
+                  <button className="image-remove" onClick={() => applyLocalChange(removeImage(tasks, task.id, image.id))} aria-label="Remove image"><X size={12} /></button>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="sync-hint">Paste an image (⌘V) to attach it here.</p>
+          )}
+        </div>
+      </article>
+    )
+  }
+
+  const renderRow = (task: Task) => (selectedId === task.id && boardView !== 'trash' ? renderExpandedRow(task) : (
     <article
       key={task.id}
-      className={`board-row ${selectedId === task.id ? 'selected' : ''} ${draggingId === task.id ? 'dragging' : ''}`}
+      className={`board-row ${draggingId === task.id ? 'dragging' : ''}`}
       draggable={boardView === 'all'}
       onDragStart={(event) => {
         event.dataTransfer.setData('text/plain', task.id)
@@ -371,7 +467,7 @@ function App() {
         <Star size={15} />
       </button>
     </article>
-  )
+  ))
 
   const renderTrashRow = (task: Task) => (
     <article key={task.id} className="board-row trash-row">
@@ -543,35 +639,6 @@ function App() {
           </div>
         </section>
       </main>
-
-      {selected && <aside className="detail-panel">
-        <div className="detail-header"><span>Task details</span><button className="icon-button" onClick={() => setSelectedId(null)} aria-label="Close task details"><X size={18} /></button></div>
-        <div className="detail-body">
-          <button className={`large-check priority-${selected.priority}`} onClick={() => toggleComplete(selected)}>{selected.status === 'completed' && <Check size={16} />}</button>
-          <textarea className="title-editor" value={selected.title} onChange={(event) => applyLocalChange(updateTask(tasks, { ...selected, title: event.target.value }))} aria-label="Task title" />
-          <label>Project<select value={selected.project} onChange={(event) => applyLocalChange(updateTask(tasks, { ...selected, project: event.target.value }))}>{projects.map((project) => <option key={project}>{project}</option>)}</select></label>
-          <label>Due date<input type="date" value={selected.dueDate ?? ''} onChange={(event) => applyLocalChange(updateTask(tasks, { ...selected, dueDate: event.target.value || undefined }))} /></label>
-          <label>Priority<select value={selected.priority} onChange={(event) => applyLocalChange(updateTask(tasks, { ...selected, priority: event.target.value as Task['priority'] }))}><option value="none">None</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></label>
-          <label>Notes<RichNoteEditor key={selected.id} initialHtml={selected.note ?? ''} placeholder="Add notes…" ariaLabel="Task notes" onChange={(html) => applyLocalChange(updateTask(tasks, { ...selected, note: html || undefined }))} /></label>
-
-          <div className="image-section">
-            <div className="image-section-label">Images{selected.images?.length ? <span>{selected.images.length}</span> : null}</div>
-            {selected.images?.length ? (
-              <div className="image-grid">
-                {selected.images.map((image) => (
-                  <div key={image.id} className="image-thumb">
-                    <img src={image.dataUrl} alt="" onClick={() => setLightboxImage(image.dataUrl)} />
-                    <button className="image-remove" onClick={() => applyLocalChange(removeImage(tasks, selected.id, image.id))} aria-label="Remove image"><X size={12} /></button>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="sync-hint">Paste an image (⌘V) to attach it here.</p>
-            )}
-          </div>
-        </div>
-        <div className="detail-footer"><button className="delete-button" onClick={() => trashTask(selected)}><Trash2 size={15} /> Move to bin</button></div>
-      </aside>}
 
       {composerOpen && (
         <TaskCreateModal

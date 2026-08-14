@@ -79,6 +79,18 @@ kbd { margin-left:auto; padding:2px 5px; color:var(--faint); background:rgba(255
 .board-empty svg { margin-bottom:5px; color:var(--accent); }
 .board-empty strong { color:var(--secondary); font-size:13px; font-weight:500; }
 .board-empty p { margin:0; font-size:11px; line-height:1.5; }
+.board-editor { display:block; padding:12px 14px 14px; background:rgba(255,255,255,.035); cursor:default; }
+.editor-head { display:flex; align-items:center; gap:8px; }
+.editor-head .row-delete { opacity:1; }
+.editor-title { flex:1; min-width:0; padding:2px 0; color:var(--text); background:transparent; border:0; outline:0; font-size:14px; font-weight:500; letter-spacing:-.1px; }
+.editor-notes { min-height:56px; margin-top:9px; font-size:12px; }
+.editor-grid { display:grid; grid-template-columns:1fr 1fr; gap:9px; margin-top:10px; }
+.editor-grid label { display:grid; gap:4px; color:var(--faint); font-size:10px; }
+.editor-grid select,.editor-grid input { width:100%; padding:6px 8px; color:var(--secondary); color-scheme:dark; background:rgba(255,255,255,.035); border:1px solid var(--border); border-radius:5px; outline:0; font-size:11px; }
+.editor-grid select:focus,.editor-grid input:focus { border-color:rgba(130,143,255,.4); }
+.editor-images { margin-top:10px; }
+.editor-images .sync-hint { margin:0; }
+.editor-images .image-grid { margin-top:0; }
 .board-completed { border-top:1px solid var(--border); }
 .completed-toggle { display:flex; align-items:center; gap:7px; width:100%; padding:10px 14px; color:var(--muted); background:transparent; border:0; font-size:12px; cursor:pointer; }
 .completed-toggle:hover { color:var(--secondary); }

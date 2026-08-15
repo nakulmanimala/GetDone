@@ -11,18 +11,21 @@ const payload: SnapshotPayload = {
 }
 
 describe('createApiClient', () => {
-  it('sends the token as a bearer header on every request', async () => {
-    let capturedAuth: string | null = null
+  // Identity now travels in an httpOnly session cookie, which the browser
+  // only attaches when credentials are requested.
+  it('sends the session cookie and no bearer header', async () => {
+    let captured: RequestInit | undefined
     const client = createApiClient({
-      getToken: () => 'my-token',
       fetchFn: async (_url, init) => {
-        capturedAuth = (init!.headers as Record<string, string>).Authorization
+        captured = init
         return jsonResponse(200, { exists: false, updatedAt: null })
       },
     })
 
     await client.fetchMeta()
-    expect(capturedAuth).toBe('Bearer my-token')
+
+    expect(captured?.credentials).toBe('same-origin')
+    expect((captured?.headers as Record<string, string> | undefined)?.Authorization).toBeUndefined()
   })
 
   it('fetchMeta returns the parsed meta payload', async () => {

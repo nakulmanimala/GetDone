@@ -42,9 +42,38 @@ describe('sync backend service', () => {
 
   it('documents the required sync environment variables', () => {
     expect(envExample).toContain('S3_BUCKET=')
-    expect(envExample).toContain('S3_SNAPSHOT_KEY=')
-    expect(envExample).toContain('SYNC_API_TOKEN=')
+    expect(envExample).toContain('S3_SNAPSHOT_PREFIX=')
     expect(envExample).toContain('SYNC_ENCRYPTION_KEY=')
     expect(envExample).toContain('AWS_PROFILE=')
+  })
+
+  it('documents the Google sign-in settings', () => {
+    expect(envExample).toContain('GOOGLE_CLIENT_ID=')
+    expect(envExample).toContain('GOOGLE_CLIENT_SECRET=')
+    expect(envExample).toContain('GOOGLE_ALLOWED_DOMAIN=entri.me')
+    expect(envExample).toContain('SESSION_SECRET=')
+    expect(envExample).toContain('APP_ORIGIN=')
+  })
+
+  // The shared bearer token was replaced by per-user Google sessions; leaving
+  // it wired up would be a second, weaker way into everyone's data.
+  it('no longer carries the shared sync token', () => {
+    expect(envExample).not.toContain('SYNC_API_TOKEN')
+    expect(compose).not.toContain('SYNC_API_TOKEN')
+  })
+
+  it('passes the auth settings through to the sync container', () => {
+    const syncService = compose.match(/\n {2}sync:\n([\s\S]*?)(?=\n {2}\S|\n*$)/)?.[1] ?? ''
+    expect(syncService).toContain('GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}')
+    expect(syncService).toContain('GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}')
+    expect(syncService).toContain('SESSION_SECRET=${SESSION_SECRET}')
+    expect(syncService).toContain('APP_ORIGIN=')
+  })
+
+  // The OAuth callback is a redirect: nginx must not rewrite the Location
+  // header on its way back to the browser.
+  it('leaves proxied redirects untouched', () => {
+    const apiLocation = nginxConfig.match(/location \/api\/ \{([\s\S]*?)\n    \}/)?.[1] ?? ''
+    expect(apiLocation).toContain('proxy_redirect off')
   })
 })

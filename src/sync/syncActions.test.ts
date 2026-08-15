@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import type { Task } from '../domain/tasks'
 import { AuthError, type ApiClient, type SnapshotPayload } from './apiClient'
 import { applySyncOutcome, backupNow, checkSync, describeSyncError, restoreFromS3, type SyncSession } from './syncActions'
-import { getLastSyncedAt, setUpdatedAt } from './syncMeta'
+import { getLastSyncedAt, setSyncScope, setUpdatedAt } from './syncMeta'
 
 const T1 = '2026-08-14T00:00:00.000Z'
 
@@ -24,6 +24,8 @@ describe('syncActions', () => {
 
   beforeEach(() => {
     localStorage.clear()
+    // Watermarks are stored per user, so a scope must be set as it is at boot.
+    setSyncScope('1001')
     session = { api: fakeApi() }
   })
 

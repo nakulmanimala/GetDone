@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { SyncPanel } from './SyncPanel'
-import { setApiToken, setConfigured } from './syncMeta'
+import { setSyncScope } from './syncMeta'
 import type { SyncStatus } from './syncStatus'
 import { ConfirmDialog, type ConfirmRequest } from '../components/ConfirmDialog'
 import type { Task } from '../domain/tasks'
@@ -19,11 +19,9 @@ function noop() {}
 function Harness({
   initialStatus = { kind: 'idle' },
   onApplyRemoteSnapshot = noop,
-  onConfigured = noop,
 }: {
   initialStatus?: SyncStatus
   onApplyRemoteSnapshot?: (tasks: Task[], updatedAt: string) => void
-  onConfigured?: () => void
 }) {
   const [status, setStatus] = useState<SyncStatus>(initialStatus)
   const [confirmRequest, setConfirmRequest] = useState<ConfirmRequest | null>(null)
@@ -34,7 +32,6 @@ function Harness({
         status={status}
         onStatusChange={setStatus}
         onApplyRemoteSnapshot={onApplyRemoteSnapshot}
-        onConfigured={onConfigured}
         onClose={noop}
         requestConfirm={setConfirmRequest}
       />
@@ -50,17 +47,26 @@ function Harness({
 }
 
 describe('SyncPanel', () => {
-  beforeEach(() => localStorage.clear())
-
-  it('shows only the API token setup form before first-time setup, no passphrase', () => {
-    render(<Harness />)
-    expect(screen.getByLabelText(/api token/i)).toBeInTheDocument()
-    expect(screen.queryByLabelText(/passphrase/i)).not.toBeInTheDocument()
+  beforeEach(() => {
+    localStorage.clear()
+    setSyncScope('1001')
   })
 
-  it('renders the conflict banner with Keep local / Keep S3 actions once configured', () => {
-    setConfigured(true)
-    setApiToken('token')
+  // Being signed in is the whole configuration now: the server holds the AWS
+  // credentials and derives the object key from the session.
+  it('needs no per-browser token or passphrase setup', () => {
+    render(<Harness />)
+    expect(screen.queryByLabelText(/api token/i)).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(/passphrase/i)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /set up s3 backup/i })).not.toBeInTheDocument()
+  })
+
+  it('says the backup is private to the signed-in account', () => {
+    render(<Harness />)
+    expect(screen.getByText(/private to your account/i)).toBeInTheDocument()
+  })
+
+  it('renders the conflict banner with Keep local / Keep S3 actions', () => {
 
     render(
       <Harness
@@ -73,9 +79,7 @@ describe('SyncPanel', () => {
     expect(screen.getByRole('button', { name: /keep s3/i })).toBeInTheDocument()
   })
 
-  it('shows the auto backup hint once configured, with no unlock step', () => {
-    setConfigured(true)
-    setApiToken('token')
+  it('shows the auto backup hint, with no unlock step', () => {
 
     render(<Harness />)
 
@@ -84,8 +88,6 @@ describe('SyncPanel', () => {
   })
 
   it('asks for confirmation in the themed dialog, not the browser one', async () => {
-    setConfigured(true)
-    setApiToken('token')
     const confirmSpy = vi.spyOn(window, 'confirm')
     const onApplyRemoteSnapshot = vi.fn()
     const user = userEvent.setup()
@@ -102,8 +104,6 @@ describe('SyncPanel', () => {
   })
 
   it('does not restore when the confirmation is dismissed', async () => {
-    setConfigured(true)
-    setApiToken('token')
     const onApplyRemoteSnapshot = vi.fn()
     const user = userEvent.setup()
 
@@ -116,27 +116,4 @@ describe('SyncPanel', () => {
     expect(onApplyRemoteSnapshot).not.toHaveBeenCalled()
   })
 
-  it('reports an empty token in the panel instead of a browser validation bubble', async () => {
-    const onConfigured = vi.fn()
-    const user = userEvent.setup()
-
-    render(<Harness onConfigured={onConfigured} />)
-
-    await user.click(screen.getByRole('button', { name: /set up s3 backup/i }))
-
-    expect(screen.getByText('An API token is required.')).toBeInTheDocument()
-    expect(onConfigured).not.toHaveBeenCalled()
-  })
-
-  it('calls onConfigured after submitting the setup form', async () => {
-    const onConfigured = vi.fn()
-    const user = userEvent.setup()
-
-    render(<Harness onConfigured={onConfigured} />)
-
-    await user.type(screen.getByLabelText(/api token/i), 'my-token')
-    await user.click(screen.getByRole('button', { name: /set up s3 backup/i }))
-
-    expect(onConfigured).toHaveBeenCalled()
-  })
 })

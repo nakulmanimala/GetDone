@@ -1,5 +1,3 @@
-import { getApiToken } from './syncMeta'
-
 export class AuthError extends Error {}
 export class NotFoundError extends Error {}
 export class NetworkError extends Error {}
@@ -23,23 +21,21 @@ export interface ApiClient {
 
 export interface ApiClientDeps {
   fetchFn?: typeof fetch
-  getToken?: () => string | null
 }
 
-export function createApiClient({ fetchFn = fetch, getToken = getApiToken }: ApiClientDeps = {}): ApiClient {
+// Requests carry the httpOnly session cookie rather than a bearer token; the
+// backend derives which snapshot to touch from that session, so there is no
+// user identifier for the client to get wrong (or tamper with).
+export function createApiClient({ fetchFn = fetch }: ApiClientDeps = {}): ApiClient {
   async function request(path: string, init: RequestInit = {}): Promise<Response> {
-    const token = getToken()
     let response: Response
     try {
-      response = await fetchFn(`/api${path}`, {
-        ...init,
-        headers: { ...(init.headers ?? {}), Authorization: `Bearer ${token ?? ''}` },
-      })
+      response = await fetchFn(`/api${path}`, { ...init, credentials: 'same-origin' })
     } catch (error) {
       throw new NetworkError('Could not reach the sync server.', { cause: error })
     }
 
-    if (response.status === 401) throw new AuthError('The sync token was rejected.')
+    if (response.status === 401) throw new AuthError('Your session has expired. Please sign in again.')
     if (response.status === 404) throw new NotFoundError('No snapshot found.')
     if (!response.ok) throw new ServerError(`Sync server returned status ${response.status}.`)
     return response

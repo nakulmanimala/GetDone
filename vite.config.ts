@@ -8,6 +8,15 @@ export default defineConfig({
   server: {
     port: 1420,
     strictPort: true,
+    // Sign-in and sync both live behind /api, which nginx proxies in
+    // production. Mirror that in dev so the app can authenticate against a
+    // locally running sync backend (override the target with SYNC_ORIGIN).
+    proxy: {
+      '/api': {
+        target: process.env.SYNC_ORIGIN ?? 'http://127.0.0.1:8081',
+        changeOrigin: false,
+      },
+    },
   },
   envPrefix: ['VITE_', 'TAURI_'],
   test: {

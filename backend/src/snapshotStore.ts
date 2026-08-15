@@ -16,6 +16,11 @@ export interface SnapshotStore {
   put(body: string, updatedAt: string): Promise<void>
 }
 
+/**
+ * Opens a store over one object. Callers bind the key per request from the
+ * signed-in user's id, which is what isolates one teammate's tasks from
+ * another's — see snapshotKeyFor in config.ts.
+ */
 export function createS3SnapshotStore(client: S3Client, bucket: string, key: string): SnapshotStore {
   return {
     async head() {

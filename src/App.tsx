@@ -7,17 +7,25 @@ import {
   ChevronUp,
   Circle,
   Cloud,
+  LogOut,
   Menu,
   Plus,
   Repeat as RepeatIcon,
   RotateCcw,
   Search,
-  Settings,
   Star,
   Trash2,
   X,
 } from 'lucide-react'
 import './App.css'
+import { SignInScreen } from './auth/SignInScreen'
+import {
+  fetchSession,
+  signOut,
+  takeAuthError,
+  type SessionInfo,
+  type SessionUser,
+} from './auth/session'
 import { ConfirmDialog, type ConfirmRequest } from './components/ConfirmDialog'
 import { DetailsField } from './components/DetailsField'
 import { DueControls } from './components/DueControls'
@@ -44,13 +52,14 @@ import {
   type TaskDraft,
 } from './domain/tasks'
 import { compressImageFile, findImageFile } from './media/clipboardImage'
-import { loadProjects, loadTasks, saveProjects, saveTasks } from './storage/taskStorage'
+import { claimPreAccountTasks, loadProjects, loadTasks, saveProjects, saveTasks } from './storage/taskStorage'
 import { createApiClient } from './sync/apiClient'
 import { SyncPanel } from './sync/SyncPanel'
 import { applySyncOutcome, checkSync, describeSyncError } from './sync/syncActions'
 import {
   isConfigured,
   setLastSyncedAt,
+  setSyncScope,
   setUpdatedAt as setSyncUpdatedAt,
   touchUpdatedAt,
 } from './sync/syncMeta'
@@ -62,6 +71,12 @@ const AUTO_SYNC_INTERVAL_MS = 5 * 60_000
 const defaultProjects = ['Inbox', 'Personal', 'DevOps', 'GetDone']
 const baseProjectColors: Record<string, string> = { Personal: '#a78bfa', DevOps: '#38bdf8', GetDone: '#34d399', Inbox: '#8a8f98' }
 const projectPalette = ['#7170ff', '#a78bfa', '#38bdf8', '#34d399', '#fbbf24', '#fb7185']
+
+function initialsOf(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean)
+  if (!parts.length) return '?'
+  return (parts.length === 1 ? parts[0].slice(0, 2) : parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
+}
 
 // Details are seeded from the stored note once per task (legacy notes may be
 // HTML) and then owned locally, so typing never fights the round-trip through
@@ -80,11 +95,14 @@ function TaskDetails({ note, onChange }: { note?: string; onChange: (text: strin
   )
 }
 
-function App() {
-  const [tasks, setTasks] = useState<Task[]>(() => migrateLegacyNotes(loadTasks(initialTasks)))
+// The signed-in workspace. Mounted with key={user.sub} so switching accounts
+// tears down every piece of in-memory state rather than leaking one person's
+// tasks, selection, or sync status into the next person's session.
+function Workspace({ user, onSignOut }: { user: SessionUser; onSignOut: () => void }) {
+  const [tasks, setTasks] = useState<Task[]>(() => migrateLegacyNotes(loadTasks(user.sub, initialTasks)))
   const [projects, setProjects] = useState<string[]>(() => {
-    const stored = loadProjects(defaultProjects)
-    const fromTasks = loadTasks(initialTasks).map((task) => task.project)
+    const stored = loadProjects(user.sub, defaultProjects)
+    const fromTasks = loadTasks(user.sub, initialTasks).map((task) => task.project)
     return [...new Set([...stored, ...fromTasks])]
   })
   const [boardView, setBoardView] = useState<'all' | 'starred' | 'trash'>('all')
@@ -107,18 +125,20 @@ function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [syncPanelOpen, setSyncPanelOpen] = useState(false)
   const [syncStatus, setSyncStatus] = useState<SyncStatus>({ kind: 'idle' })
-  const [syncConfigured, setSyncConfigured] = useState(isConfigured())
+  // Backup no longer needs per-browser setup: being signed in is the whole
+  // configuration, since the server holds the credentials and the object key.
+  const syncConfigured = isConfigured()
   const [storageFull, setStorageFull] = useState(false)
   const [lightboxImage, setLightboxImage] = useState<string | null>(null)
   const [confirmRequest, setConfirmRequest] = useState<ConfirmRequest | null>(null)
 
   useEffect(() => {
-    setStorageFull(!saveTasks(tasks))
-  }, [tasks])
+    setStorageFull(!saveTasks(user.sub, tasks))
+  }, [user.sub, tasks])
 
   useEffect(() => {
-    saveProjects(projects)
-  }, [projects])
+    saveProjects(user.sub, projects)
+  }, [user.sub, projects])
 
   const applyLocalChange = useCallback((next: Task[]) => {
     setTasks(next)
@@ -626,8 +646,16 @@ function App() {
 
         <div className="sidebar-footer">
           <div className="progress-card"><div><span>Weekly progress</span><strong>{completion}%</strong></div><div className="progress-track"><i style={{ width: `${completion}%` }} /></div><small>{completedCount} completed · {openCount} remaining</small></div>
-          <button onClick={openSyncPanel}><Cloud size={16} /><span>S3 Backup</span><em>{syncConfigured ? 'Configured' : 'Not configured'}</em></button>
-          <button><Settings size={16} /><span>Settings</span><ChevronRight size={14} /></button>
+          <button onClick={openSyncPanel}><Cloud size={16} /><span>S3 Backup</span><em>{syncConfigured ? 'On' : 'Off'}</em></button>
+          <div className="account-row">
+            <span className="account-avatar" aria-hidden="true">{initialsOf(user.name)}</span>
+            <div className="account-identity">
+              <strong>{user.name}</strong>
+              <span>{user.email}</span>
+            </div>
+            {user.role === 'superuser' && <em className="owner-badge" title="Workspace owner">Owner</em>}
+          </div>
+          <button onClick={onSignOut}><LogOut size={16} /><span>Sign out</span></button>
         </div>
       </aside>
 
@@ -638,7 +666,7 @@ function App() {
           <button className="icon-button mobile-menu" onClick={() => setSidebarOpen(true)} aria-label="Open navigation"><Menu size={19} /></button>
           <div className="search-wrap"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search tasks…" aria-label="Search tasks" /><kbd>⌘ K</kbd></div>
           <div className={`sync-status ${syncStatusView.className}`}><i />{syncStatusView.label}</div>
-          <button className="avatar" aria-label="Account">NP</button>
+          <button className="avatar" aria-label={`Signed in as ${user.email}`} onClick={openSyncPanel}>{initialsOf(user.name)}</button>
         </header>
 
         <section className="content">
@@ -742,7 +770,6 @@ function App() {
           status={syncStatus}
           onStatusChange={setSyncStatus}
           onApplyRemoteSnapshot={applyRemoteSnapshot}
-          onConfigured={() => setSyncConfigured(true)}
           onClose={() => setSyncPanelOpen(false)}
           requestConfirm={setConfirmRequest}
         />
@@ -755,6 +782,53 @@ function App() {
       )}
     </div>
   )
+}
+
+// Session gate. Nothing task-shaped renders until the backend has told us who
+// is signed in, so a signed-out browser never paints another user's data.
+function App() {
+  const [session, setSession] = useState<SessionInfo | null>(null)
+  const [unreachable, setUnreachable] = useState(false)
+  const [authError, setAuthError] = useState<string | null>(() => takeAuthError())
+
+  const load = useCallback(async () => {
+    setUnreachable(false)
+    try {
+      const info = await fetchSession()
+      setSyncScope(info.user?.sub ?? null)
+      if (info.user) {
+        claimPreAccountTasks(info.user.sub)
+        setAuthError(null) // a previous failure is moot once someone is in
+      }
+      setSession(info)
+    } catch {
+      setUnreachable(true)
+    }
+  }, [])
+
+  useEffect(() => {
+    void load()
+  }, [load])
+
+  async function handleSignOut() {
+    await signOut()
+    setSyncScope(null)
+    setSession((current) => (current ? { ...current, user: null } : current))
+  }
+
+  if (unreachable) {
+    return <SignInScreen allowedDomain="entri.me" offline onRetry={() => void load()} error={authError} />
+  }
+
+  if (!session) {
+    return <div className="signin-shell"><div className="signin-loading" role="status">Loading…</div></div>
+  }
+
+  if (!session.user) {
+    return <SignInScreen allowedDomain={session.allowedDomain} error={authError} />
+  }
+
+  return <Workspace key={session.user.sub} user={session.user} onSignOut={() => void handleSignOut()} />
 }
 
 export default App

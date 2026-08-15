@@ -1,4 +1,3 @@
-import { useState, type FormEvent } from 'react'
 import { AlertTriangle, X } from 'lucide-react'
 import type { ConfirmRequest } from '../components/ConfirmDialog'
 import type { Task } from '../domain/tasks'
@@ -11,7 +10,7 @@ import {
   restoreFromS3,
   type SyncSession,
 } from './syncActions'
-import { getApiToken, getLastSyncedAt, isConfigured, setApiToken, setConfigured } from './syncMeta'
+import { getLastSyncedAt } from './syncMeta'
 import type { SyncStatus } from './syncStatus'
 
 function formatTimestamp(iso: string): string {
@@ -23,35 +22,17 @@ interface SyncPanelProps {
   status: SyncStatus
   onStatusChange: (status: SyncStatus) => void
   onApplyRemoteSnapshot: (tasks: Task[], updatedAt: string) => void
-  onConfigured: () => void
   onClose: () => void
   /** Raises the app's themed confirm dialog; App owns the single instance. */
   requestConfirm: (request: ConfirmRequest) => void
 }
 
-export function SyncPanel({ tasks, status, onStatusChange, onApplyRemoteSnapshot, onConfigured, onClose, requestConfirm }: SyncPanelProps) {
-  const [configured, setConfiguredState] = useState(isConfigured())
-  const [apiTokenInput, setApiTokenInput] = useState(getApiToken() ?? '')
-
+export function SyncPanel({ tasks, status, onStatusChange, onApplyRemoteSnapshot, onClose, requestConfirm }: SyncPanelProps) {
   const lastSyncedAt = getLastSyncedAt()
   const working = status.kind === 'working'
 
   function session(): SyncSession {
     return { api: createApiClient() }
-  }
-
-  function handleSetup(event: FormEvent) {
-    event.preventDefault()
-    if (!apiTokenInput.trim()) {
-      onStatusChange({ kind: 'error', message: 'An API token is required.' })
-      return
-    }
-
-    setApiToken(apiTokenInput.trim())
-    setConfigured(true)
-    setConfiguredState(true)
-    onConfigured()
-    onStatusChange({ kind: 'idle' })
   }
 
   async function handleCheck() {
@@ -122,21 +103,9 @@ export function SyncPanel({ tasks, status, onStatusChange, onApplyRemoteSnapshot
         <button className="icon-button" onClick={onClose} aria-label="Close sync panel"><X size={18} /></button>
       </div>
       <div className="detail-body">
-        {!configured && (
-          // noValidate: the browser's own "Please fill out this field" bubble
-          // is unthemed and would preempt handleSetup, so the empty-token case
-          // is reported through the panel's own error line instead.
-          <form className="sync-form" onSubmit={handleSetup} noValidate>
-            <label>API token<input type="password" value={apiTokenInput} onChange={(event) => setApiTokenInput(event.target.value)} placeholder="SYNC_API_TOKEN" required autoFocus /></label>
-            {status.kind === 'error' && <p className="sync-error">{status.message}</p>}
-            <p className="sync-hint">This token is separate from your AWS credentials — it only authenticates this browser to your self-hosted sync server. The server encrypts backups at rest; there's no passphrase to set here.</p>
-            <button type="submit" className="sync-primary-button">Set up S3 Backup</button>
-          </form>
-        )}
-
-        {configured && (
+        {(
           <div className="sync-actions">
-            <p className="sync-hint">Auto backup is on — changes sync a few seconds after you make them.</p>
+            <p className="sync-hint">Auto backup is on — changes sync a few seconds after you make them. Your backup is private to your account.</p>
             <p className="sync-hint">Last synced: {lastSyncedAt ? formatTimestamp(lastSyncedAt) : 'Never'}</p>
 
             {status.kind === 'conflict' && (

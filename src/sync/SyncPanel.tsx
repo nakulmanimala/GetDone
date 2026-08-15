@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react'
 import { AlertTriangle, X } from 'lucide-react'
+import type { ConfirmRequest } from '../components/ConfirmDialog'
 import type { Task } from '../domain/tasks'
 import { createApiClient } from './apiClient'
 import {
@@ -24,9 +25,11 @@ interface SyncPanelProps {
   onApplyRemoteSnapshot: (tasks: Task[], updatedAt: string) => void
   onConfigured: () => void
   onClose: () => void
+  /** Raises the app's themed confirm dialog; App owns the single instance. */
+  requestConfirm: (request: ConfirmRequest) => void
 }
 
-export function SyncPanel({ tasks, status, onStatusChange, onApplyRemoteSnapshot, onConfigured, onClose }: SyncPanelProps) {
+export function SyncPanel({ tasks, status, onStatusChange, onApplyRemoteSnapshot, onConfigured, onClose, requestConfirm }: SyncPanelProps) {
   const [configured, setConfiguredState] = useState(isConfigured())
   const [apiTokenInput, setApiTokenInput] = useState(getApiToken() ?? '')
 
@@ -71,8 +74,17 @@ export function SyncPanel({ tasks, status, onStatusChange, onApplyRemoteSnapshot
     }
   }
 
-  async function handleRestore() {
-    if (!window.confirm('Restore will replace all local tasks with the S3 backup. Continue?')) return
+  function handleRestore() {
+    requestConfirm({
+      title: 'Restore from S3?',
+      message: 'Every task on this device will be replaced by the S3 backup. This cannot be undone.',
+      confirmLabel: 'Restore',
+      danger: true,
+      action: () => void runRestore(),
+    })
+  }
+
+  async function runRestore() {
     onStatusChange({ kind: 'working', label: 'Restoring…' })
     try {
       const result = await restoreFromS3(session())
@@ -111,8 +123,12 @@ export function SyncPanel({ tasks, status, onStatusChange, onApplyRemoteSnapshot
       </div>
       <div className="detail-body">
         {!configured && (
-          <form className="sync-form" onSubmit={handleSetup}>
+          // noValidate: the browser's own "Please fill out this field" bubble
+          // is unthemed and would preempt handleSetup, so the empty-token case
+          // is reported through the panel's own error line instead.
+          <form className="sync-form" onSubmit={handleSetup} noValidate>
             <label>API token<input type="password" value={apiTokenInput} onChange={(event) => setApiTokenInput(event.target.value)} placeholder="SYNC_API_TOKEN" required autoFocus /></label>
+            {status.kind === 'error' && <p className="sync-error">{status.message}</p>}
             <p className="sync-hint">This token is separate from your AWS credentials — it only authenticates this browser to your self-hosted sync server. The server encrypts backups at rest; there's no passphrase to set here.</p>
             <button type="submit" className="sync-primary-button">Set up S3 Backup</button>
           </form>

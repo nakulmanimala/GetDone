@@ -5,6 +5,7 @@ import userEvent from '@testing-library/user-event'
 import { SyncPanel } from './SyncPanel'
 import { setApiToken, setConfigured } from './syncMeta'
 import type { SyncStatus } from './syncStatus'
+import { ConfirmDialog, type ConfirmRequest } from '../components/ConfirmDialog'
 import type { Task } from '../domain/tasks'
 
 const tasks: Task[] = [
@@ -13,24 +14,38 @@ const tasks: Task[] = [
 
 function noop() {}
 
-// Mirrors how App.tsx holds status so onStatusChange updates re-render the panel.
+// Mirrors how App.tsx wires the panel: it holds the status, and it owns the
+// single themed confirm dialog the panel asks for.
 function Harness({
   initialStatus = { kind: 'idle' },
   onApplyRemoteSnapshot = noop,
+  onConfigured = noop,
 }: {
   initialStatus?: SyncStatus
   onApplyRemoteSnapshot?: (tasks: Task[], updatedAt: string) => void
+  onConfigured?: () => void
 }) {
   const [status, setStatus] = useState<SyncStatus>(initialStatus)
+  const [confirmRequest, setConfirmRequest] = useState<ConfirmRequest | null>(null)
   return (
-    <SyncPanel
-      tasks={tasks}
-      status={status}
-      onStatusChange={setStatus}
-      onApplyRemoteSnapshot={onApplyRemoteSnapshot}
-      onConfigured={noop}
-      onClose={noop}
-    />
+    <>
+      <SyncPanel
+        tasks={tasks}
+        status={status}
+        onStatusChange={setStatus}
+        onApplyRemoteSnapshot={onApplyRemoteSnapshot}
+        onConfigured={onConfigured}
+        onClose={noop}
+        requestConfirm={setConfirmRequest}
+      />
+      {confirmRequest && (
+        <ConfirmDialog
+          request={confirmRequest}
+          onConfirm={() => { confirmRequest.action(); setConfirmRequest(null) }}
+          onCancel={() => setConfirmRequest(null)}
+        />
+      )}
+    </>
   )
 }
 
@@ -68,10 +83,10 @@ describe('SyncPanel', () => {
     expect(screen.queryByRole('button', { name: /unlock/i })).not.toBeInTheDocument()
   })
 
-  it('requires confirmation before restoring over local tasks', async () => {
+  it('asks for confirmation in the themed dialog, not the browser one', async () => {
     setConfigured(true)
     setApiToken('token')
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    const confirmSpy = vi.spyOn(window, 'confirm')
     const onApplyRemoteSnapshot = vi.fn()
     const user = userEvent.setup()
 
@@ -79,25 +94,45 @@ describe('SyncPanel', () => {
 
     await user.click(screen.getByRole('button', { name: /restore from s3/i }))
 
-    expect(confirmSpy).toHaveBeenCalled()
-    expect(onApplyRemoteSnapshot).not.toHaveBeenCalled()
+    const dialog = screen.getByRole('alertdialog', { name: /restore from s3\?/i })
+    expect(dialog).toBeInTheDocument()
+    expect(dialog).toHaveTextContent(/replaced by the S3 backup/i)
+    expect(confirmSpy).not.toHaveBeenCalled()
     confirmSpy.mockRestore()
+  })
+
+  it('does not restore when the confirmation is dismissed', async () => {
+    setConfigured(true)
+    setApiToken('token')
+    const onApplyRemoteSnapshot = vi.fn()
+    const user = userEvent.setup()
+
+    render(<Harness onApplyRemoteSnapshot={onApplyRemoteSnapshot} />)
+
+    await user.click(screen.getByRole('button', { name: /restore from s3/i }))
+    await user.click(screen.getByRole('button', { name: /cancel/i }))
+
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(onApplyRemoteSnapshot).not.toHaveBeenCalled()
+  })
+
+  it('reports an empty token in the panel instead of a browser validation bubble', async () => {
+    const onConfigured = vi.fn()
+    const user = userEvent.setup()
+
+    render(<Harness onConfigured={onConfigured} />)
+
+    await user.click(screen.getByRole('button', { name: /set up s3 backup/i }))
+
+    expect(screen.getByText('An API token is required.')).toBeInTheDocument()
+    expect(onConfigured).not.toHaveBeenCalled()
   })
 
   it('calls onConfigured after submitting the setup form', async () => {
     const onConfigured = vi.fn()
     const user = userEvent.setup()
 
-    render(
-      <SyncPanel
-        tasks={tasks}
-        status={{ kind: 'idle' }}
-        onStatusChange={noop}
-        onApplyRemoteSnapshot={noop}
-        onConfigured={onConfigured}
-        onClose={noop}
-      />,
-    )
+    render(<Harness onConfigured={onConfigured} />)
 
     await user.type(screen.getByLabelText(/api token/i), 'my-token')
     await user.click(screen.getByRole('button', { name: /set up s3 backup/i }))

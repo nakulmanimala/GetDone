@@ -485,7 +485,9 @@ function App() {
                       {formatDue(task.dueDate, task.dueTime)}
                     </span>
                   )}
-                  {task.repeat && <span className="due-chip" title={`Repeats ${task.repeat}`}><RepeatIcon size={11} /></span>}
+                  {/* aria-label, not title: a title would raise the browser's
+                      own unthemed tooltip on hover. */}
+                  {task.repeat && <span className="due-chip" aria-label={`Repeats ${task.repeat}`}><RepeatIcon size={11} /></span>}
                 </div>
               )}
             </div>
@@ -742,6 +744,7 @@ function App() {
           onApplyRemoteSnapshot={applyRemoteSnapshot}
           onConfigured={() => setSyncConfigured(true)}
           onClose={() => setSyncPanelOpen(false)}
+          requestConfirm={setConfirmRequest}
         />
       )}
 

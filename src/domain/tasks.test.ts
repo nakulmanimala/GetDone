@@ -9,6 +9,7 @@ import {
   emptyTrash,
   filterTasks,
   initialTasks,
+  migrateLegacyNotes,
   moveTask,
   purgeTask,
   removeImage,
@@ -22,8 +23,7 @@ const openTask = (id: string, project = 'Inbox', extra: Partial<Task> = {}): Tas
   title: id,
   status: 'open',
   project,
-  priority: 'none',
-  createdAt: '2026-01-01T00:00:00Z',
+   createdAt: '2026-01-01T00:00:00Z',
   ...extra,
 })
 
@@ -37,7 +37,6 @@ describe('task domain', () => {
         title: 'Ship the first release',
         status: 'open',
         project: 'Inbox',
-        priority: 'none',
       }),
     ])
   })
@@ -46,18 +45,18 @@ describe('task domain', () => {
     expect(addTask(initialTasks, '   ')).toBe(initialTasks)
   })
 
-  it('creates a task with full details from the composer modal', () => {
+  it('creates a task with everything the composer can capture', () => {
     const tasks = createTask(
       [],
       {
         title: '  Write release notes  ',
-        note: '<b>Cover</b> the sync changes',
+        note: 'Cover the sync changes',
         project: 'GetDone',
-        priority: 'high',
         dueDate: '2026-08-15',
-        reminderAt: '2026-08-15T09:00:00.000Z',
+        dueTime: '09:00',
         repeat: 'weekly',
         flagged: true,
+        images: [{ id: 'img-1', dataUrl: 'data:image/jpeg;base64,xyz', addedAt: '2026-08-14T08:00:00.000Z' }],
       },
       () => 'task-1',
       () => new Date('2026-08-14T08:00:00Z'),
@@ -68,19 +67,24 @@ describe('task domain', () => {
         id: 'task-1',
         title: 'Write release notes',
         status: 'open',
-        note: '<b>Cover</b> the sync changes',
+        note: 'Cover the sync changes',
         project: 'GetDone',
-        priority: 'high',
         dueDate: '2026-08-15',
-        reminderAt: '2026-08-15T09:00:00.000Z',
+        dueTime: '09:00',
         repeat: 'weekly',
         flagged: true,
+        images: [{ id: 'img-1', dataUrl: 'data:image/jpeg;base64,xyz', addedAt: '2026-08-14T08:00:00.000Z' }],
       }),
     ])
   })
 
+  it('drops a time of day that has no due date to hang on', () => {
+    const tasks = createTask([], { title: 'Someday', dueTime: '09:00' }, () => 'task-1')
+    expect(tasks[0].dueTime).toBeUndefined()
+  })
+
   it('does not create a detailed task without a title', () => {
-    expect(createTask(initialTasks, { title: '   ', priority: 'high' })).toBe(initialTasks)
+    expect(createTask(initialTasks, { title: '   ', dueDate: '2026-08-15' })).toBe(initialTasks)
   })
 
   it('omits the flagged field when the flag is off', () => {
@@ -123,8 +127,8 @@ describe('task domain', () => {
 
   it('moves a task to another list without touching other tasks', () => {
     const tasks: Task[] = [
-      { id: 'a', title: 'One', status: 'open', project: 'Inbox', priority: 'none', createdAt: '2026-01-01T00:00:00Z' },
-      { id: 'b', title: 'Two', status: 'open', project: 'Inbox', priority: 'none', createdAt: '2026-01-01T00:00:00Z' },
+      { id: 'a', title: 'One', status: 'open', project: 'Inbox', createdAt: '2026-01-01T00:00:00Z' },
+      { id: 'b', title: 'Two', status: 'open', project: 'Inbox', createdAt: '2026-01-01T00:00:00Z' },
     ]
 
     const result = moveTask(tasks, 'a', 'Backlog')
@@ -153,7 +157,7 @@ describe('task domain', () => {
 
   it('moveTask is a no-op for the same list or an unknown task', () => {
     const tasks: Task[] = [
-      { id: 'a', title: 'One', status: 'open', project: 'Inbox', priority: 'none', createdAt: '2026-01-01T00:00:00Z' },
+      { id: 'a', title: 'One', status: 'open', project: 'Inbox', createdAt: '2026-01-01T00:00:00Z' },
     ]
 
     expect(moveTask(tasks, 'a', 'Inbox')).toBe(tasks)
@@ -162,8 +166,8 @@ describe('task domain', () => {
 
   it('marks a task complete without changing the other tasks', () => {
     const tasks: Task[] = [
-      { id: 'a', title: 'One', status: 'open', project: 'Inbox', priority: 'none', createdAt: '2026-01-01T00:00:00Z' },
-      { id: 'b', title: 'Two', status: 'open', project: 'Work', priority: 'high', createdAt: '2026-01-01T00:00:00Z' },
+      { id: 'a', title: 'One', status: 'open', project: 'Inbox', createdAt: '2026-01-01T00:00:00Z' },
+      { id: 'b', title: 'Two', status: 'open', project: 'Work', createdAt: '2026-01-01T00:00:00Z' },
     ]
 
     const result = completeTask(tasks, 'a', () => new Date('2026-01-02T00:00:00Z'))
@@ -174,9 +178,9 @@ describe('task domain', () => {
 
   it('filters today, upcoming, and completed views', () => {
     const tasks: Task[] = [
-      { id: 'today', title: 'Today', status: 'open', project: 'Inbox', priority: 'none', dueDate: '2026-08-13', createdAt: '2026-01-01T00:00:00Z' },
-      { id: 'later', title: 'Later', status: 'open', project: 'Inbox', priority: 'none', dueDate: '2026-08-14', createdAt: '2026-01-01T00:00:00Z' },
-      { id: 'done', title: 'Done', status: 'completed', project: 'Inbox', priority: 'none', createdAt: '2026-01-01T00:00:00Z' },
+      { id: 'today', title: 'Today', status: 'open', project: 'Inbox', dueDate: '2026-08-13', createdAt: '2026-01-01T00:00:00Z' },
+      { id: 'later', title: 'Later', status: 'open', project: 'Inbox', dueDate: '2026-08-14', createdAt: '2026-01-01T00:00:00Z' },
+      { id: 'done', title: 'Done', status: 'completed', project: 'Inbox', createdAt: '2026-01-01T00:00:00Z' },
     ]
 
     expect(filterTasks(tasks, 'today', '2026-08-13').map((task) => task.id)).toEqual(['today'])
@@ -186,8 +190,8 @@ describe('task domain', () => {
 
   it('attaches a pasted image to the target task without touching others', () => {
     const tasks: Task[] = [
-      { id: 'a', title: 'One', status: 'open', project: 'Inbox', priority: 'none', createdAt: '2026-01-01T00:00:00Z' },
-      { id: 'b', title: 'Two', status: 'open', project: 'Inbox', priority: 'none', createdAt: '2026-01-01T00:00:00Z' },
+      { id: 'a', title: 'One', status: 'open', project: 'Inbox', createdAt: '2026-01-01T00:00:00Z' },
+      { id: 'b', title: 'Two', status: 'open', project: 'Inbox', createdAt: '2026-01-01T00:00:00Z' },
     ]
 
     const result = addImage(tasks, 'a', 'data:image/jpeg;base64,xyz', () => 'img-1', () => new Date('2026-01-02T00:00:00Z'))
@@ -203,8 +207,7 @@ describe('task domain', () => {
         title: 'One',
         status: 'open',
         project: 'Inbox',
-        priority: 'none',
-        createdAt: '2026-01-01T00:00:00Z',
+               createdAt: '2026-01-01T00:00:00Z',
         images: [{ id: 'img-1', dataUrl: 'data:image/jpeg;base64,first', addedAt: '2026-01-01T00:00:00.000Z' }],
       },
     ]
@@ -221,20 +224,41 @@ describe('task domain', () => {
         title: 'One',
         status: 'open',
         project: 'Inbox',
-        priority: 'none',
-        createdAt: '2026-01-01T00:00:00Z',
+               createdAt: '2026-01-01T00:00:00Z',
         images: [
           { id: 'img-1', dataUrl: 'data:image/jpeg;base64,first', addedAt: '2026-01-01T00:00:00.000Z' },
           { id: 'img-2', dataUrl: 'data:image/jpeg;base64,second', addedAt: '2026-01-01T00:00:00.000Z' },
         ],
       },
-      { id: 'b', title: 'Two', status: 'open', project: 'Inbox', priority: 'none', createdAt: '2026-01-01T00:00:00Z' },
+      { id: 'b', title: 'Two', status: 'open', project: 'Inbox', createdAt: '2026-01-01T00:00:00Z' },
     ]
 
     const result = removeImage(tasks, 'a', 'img-1')
 
     expect(result[0].images?.map((image) => image.id)).toEqual(['img-2'])
     expect(result[1]).toBe(tasks[1])
+  })
+
+  it('flattens legacy HTML notes to plain text and keeps their line breaks', () => {
+    const tasks = [openTask('a', 'Inbox', { note: '<p>Line one</p><p>Line <b>two</b></p>' })]
+
+    expect(migrateLegacyNotes(tasks)[0].note).toBe('Line one\nLine two')
+  })
+
+  it('rescues images embedded in a legacy note into the task image list', () => {
+    const tasks = [openTask('a', 'Inbox', { note: 'Shot:<img src="data:image/jpeg;base64,xyz">' })]
+
+    const result = migrateLegacyNotes(tasks, () => 'img-1', () => new Date('2026-08-14T08:00:00Z'))
+
+    expect(result[0].note).toBe('Shot:')
+    expect(result[0].images).toEqual([
+      { id: 'img-1', dataUrl: 'data:image/jpeg;base64,xyz', addedAt: '2026-08-14T08:00:00.000Z' },
+    ])
+  })
+
+  it('leaves plain-text notes (and the array itself) untouched', () => {
+    const tasks = [openTask('a', 'Inbox', { note: 'Already plain' })]
+    expect(migrateLegacyNotes(tasks)).toBe(tasks)
   })
 
   it('removeImage is a no-op for an unknown image id', () => {
@@ -244,8 +268,7 @@ describe('task domain', () => {
         title: 'One',
         status: 'open',
         project: 'Inbox',
-        priority: 'none',
-        createdAt: '2026-01-01T00:00:00Z',
+               createdAt: '2026-01-01T00:00:00Z',
         images: [{ id: 'img-1', dataUrl: 'data:image/jpeg;base64,first', addedAt: '2026-01-01T00:00:00.000Z' }],
       },
     ]

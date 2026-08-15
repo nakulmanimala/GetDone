@@ -6,13 +6,13 @@ describe('task storage', () => {
   beforeEach(() => localStorage.clear())
 
   it('round trips tasks through local storage', () => {
-    const tasks: Task[] = [{ id: 'a', title: 'Stored task', status: 'open', project: 'Inbox', priority: 'none', createdAt: '2026-01-01T00:00:00Z' }]
+    const tasks: Task[] = [{ id: 'a', title: 'Stored task', status: 'open', project: 'Inbox', createdAt: '2026-01-01T00:00:00Z' }]
     saveTasks(tasks)
     expect(loadTasks([])).toEqual(tasks)
   })
 
   it('migrates tasks from the legacy storage key', () => {
-    const tasks: Task[] = [{ id: 'legacy', title: 'Keep this task', status: 'open', project: 'Inbox', priority: 'none', createdAt: '2026-01-01T00:00:00Z' }]
+    const tasks: Task[] = [{ id: 'legacy', title: 'Keep this task', status: 'open', project: 'Inbox', createdAt: '2026-01-01T00:00:00Z' }]
     localStorage.setItem('nakul-todo.tasks.v1', JSON.stringify(tasks))
 
     expect(loadTasks([])).toEqual(tasks)
@@ -22,7 +22,7 @@ describe('task storage', () => {
 
   it('falls back safely when persisted data is malformed', () => {
     localStorage.setItem('getdone.tasks.v1', '{not-json')
-    const fallback: Task[] = [{ id: 'fallback', title: 'Fallback', status: 'open', project: 'Inbox', priority: 'none', createdAt: '2026-01-01T00:00:00Z' }]
+    const fallback: Task[] = [{ id: 'fallback', title: 'Fallback', status: 'open', project: 'Inbox', createdAt: '2026-01-01T00:00:00Z' }]
     expect(loadTasks(fallback)).toBe(fallback)
   })
 
@@ -31,14 +31,14 @@ describe('task storage', () => {
       throw new DOMException('Quota exceeded', 'QuotaExceededError')
     })
 
-    const tasks: Task[] = [{ id: 'a', title: 'Task', status: 'open', project: 'Inbox', priority: 'none', createdAt: '2026-01-01T00:00:00Z' }]
+    const tasks: Task[] = [{ id: 'a', title: 'Task', status: 'open', project: 'Inbox', createdAt: '2026-01-01T00:00:00Z' }]
     expect(saveTasks(tasks)).toBe(false)
 
     setItemSpy.mockRestore()
   })
 
   it('returns true on a successful save', () => {
-    const tasks: Task[] = [{ id: 'a', title: 'Task', status: 'open', project: 'Inbox', priority: 'none', createdAt: '2026-01-01T00:00:00Z' }]
+    const tasks: Task[] = [{ id: 'a', title: 'Task', status: 'open', project: 'Inbox', createdAt: '2026-01-01T00:00:00Z' }]
     expect(saveTasks(tasks)).toBe(true)
   })
 

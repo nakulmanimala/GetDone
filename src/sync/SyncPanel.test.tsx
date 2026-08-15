@@ -8,7 +8,7 @@ import type { SyncStatus } from './syncStatus'
 import type { Task } from '../domain/tasks'
 
 const tasks: Task[] = [
-  { id: '1', title: 'Buy milk', status: 'open', project: 'Inbox', priority: 'none', createdAt: '2026-01-01T00:00:00Z' },
+  { id: '1', title: 'Buy milk', status: 'open', project: 'Inbox', createdAt: '2026-01-01T00:00:00Z' },
 ]
 
 function noop() {}

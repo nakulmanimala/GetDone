@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type FormEvent } from 'react'
 import {
-  Bell,
+  AlignLeft,
   Check,
   CheckCircle2,
   ChevronRight,
@@ -19,8 +19,11 @@ import {
 } from 'lucide-react'
 import './App.css'
 import { ConfirmDialog, type ConfirmRequest } from './components/ConfirmDialog'
-import { RichNoteEditor, stripHtml } from './components/richText'
-import { TaskCreateModal } from './components/TaskCreateModal'
+import { DetailsField } from './components/DetailsField'
+import { DueControls } from './components/DueControls'
+import { TaskComposer } from './components/TaskComposer'
+import { formatDue, isOverdue } from './domain/dueDate'
+import { htmlToText, notePreview } from './domain/notes'
 import {
   addImage,
   completeTask,
@@ -29,6 +32,7 @@ import {
   deleteTask,
   emptyTrash,
   initialTasks,
+  migrateLegacyNotes,
   moveTask,
   purgeTask,
   removeImage,
@@ -59,25 +63,25 @@ const defaultProjects = ['Inbox', 'Personal', 'DevOps', 'GetDone']
 const baseProjectColors: Record<string, string> = { Personal: '#a78bfa', DevOps: '#38bdf8', GetDone: '#34d399', Inbox: '#8a8f98' }
 const projectPalette = ['#7170ff', '#a78bfa', '#38bdf8', '#34d399', '#fbbf24', '#fb7185']
 
-// ISO timestamp <-> the local wall-clock format datetime-local inputs use.
-function isoToLocalInput(iso?: string) {
-  if (!iso) return ''
-  const date = new Date(iso)
-  const pad = (value: number) => String(value).padStart(2, '0')
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
-}
-
-function formatDueDate(date?: string) {
-  if (!date) return 'No due date'
-  const today = new Date().toISOString().slice(0, 10)
-  if (date === today) return 'Today'
-  const tomorrow = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10)
-  if (date === tomorrow) return 'Tomorrow'
-  return new Intl.DateTimeFormat('en', { month: 'short', day: 'numeric' }).format(new Date(`${date}T12:00:00`))
+// Details are seeded from the stored note once per task (legacy notes may be
+// HTML) and then owned locally, so typing never fights the round-trip through
+// the task list.
+function TaskDetails({ note, onChange }: { note?: string; onChange: (text: string) => void }) {
+  const [text, setText] = useState(() => htmlToText(note ?? ''))
+  return (
+    <DetailsField
+      value={text}
+      ariaLabel="Task details"
+      onChange={(next) => {
+        setText(next)
+        onChange(next)
+      }}
+    />
+  )
 }
 
 function App() {
-  const [tasks, setTasks] = useState<Task[]>(() => loadTasks(initialTasks))
+  const [tasks, setTasks] = useState<Task[]>(() => migrateLegacyNotes(loadTasks(initialTasks)))
   const [projects, setProjects] = useState<string[]>(() => {
     const stored = loadProjects(defaultProjects)
     const fromTasks = loadTasks(initialTasks).map((task) => task.project)
@@ -90,8 +94,8 @@ function App() {
   const [newListName, setNewListName] = useState('')
   const [query, setQuery] = useState('')
   const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [composerOpen, setComposerOpen] = useState(false)
-  const [composerProject, setComposerProject] = useState<string | undefined>(undefined)
+  // Which column is currently showing the inline composer, if any.
+  const [composerProject, setComposerProject] = useState<string | null>(null)
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const [dropTarget, setDropTarget] = useState<string | null>(null)
   const [rowDrop, setRowDrop] = useState<{ id: string; edge: 'before' | 'after' } | null>(null)
@@ -140,7 +144,8 @@ function App() {
   // (rather than onPaste on the panel) so it fires even when nothing inside
   // the panel is focused yet — the common "select task, then paste" flow.
   useEffect(() => {
-    if (!selectedId) return
+    // The composer captures its own pastes into the task being drafted.
+    if (!selectedId || composerProject) return
     const targetId = selectedId
 
     function handlePaste(event: ClipboardEvent) {
@@ -154,7 +159,7 @@ function App() {
 
     window.addEventListener('paste', handlePaste)
     return () => window.removeEventListener('paste', handlePaste)
-  }, [selectedId, applyLocalChange])
+  }, [selectedId, composerProject, applyLocalChange])
 
   const runAutoSync = useCallback(async () => {
     if (!syncConfigured) return
@@ -209,15 +214,17 @@ function App() {
   }, [closingId])
 
   // Google Tasks behavior: clicking anywhere outside the expanded card
-  // collapses it. Overlays (create modal, confirm dialog, lightbox, sync
-  // panel) don't count as "outside".
+  // collapses it. Overlays (confirm dialog, lightbox, sync panel) don't count
+  // as "outside".
   useEffect(() => {
     if (!selectedId) return
     function handlePointerDown(event: PointerEvent) {
       const target = event.target as Element | null
       if (!target) return
       if (expandedCardRef.current?.contains(target)) return
-      if (target.closest('.modal-overlay, .detail-panel, .lightbox')) return
+      // .due-popover is portalled to the body, so it is "outside" by DOM
+      // position while belonging to the card being edited.
+      if (target.closest('.modal-overlay, .detail-panel, .lightbox, .due-popover')) return
       // Another task row handles its own click (switching the expansion to
       // itself); collapsing here would shift the layout before that click
       // lands and swallow it.
@@ -232,9 +239,14 @@ function App() {
     (task: Task) => {
       const normalized = query.trim().toLowerCase()
       if (!normalized) return true
-      return `${task.title} ${task.project} ${stripHtml(task.note ?? '')}`.toLowerCase().includes(normalized)
+      return `${task.title} ${task.project} ${notePreview(task.note)}`.toLowerCase().includes(normalized)
     },
     [query],
+  )
+
+  const visibleProjects = useMemo(
+    () => projects.filter((project) => !hiddenLists.includes(project)),
+    [hiddenLists, projects],
   )
 
   const boardColumns = useMemo(() => {
@@ -247,17 +259,15 @@ function App() {
         completed: starred.filter((task) => task.status === 'completed'),
       }]
     }
-    return projects
-      .filter((project) => !hiddenLists.includes(project))
-      .map((project) => {
-        const inProject = live.filter((task) => task.project === project)
-        return {
-          name: project,
-          open: inProject.filter((task) => task.status === 'open'),
-          completed: inProject.filter((task) => task.status === 'completed'),
-        }
-      })
-  }, [boardView, hiddenLists, matchesQuery, projects, tasks])
+    return visibleProjects.map((project) => {
+      const inProject = live.filter((task) => task.project === project)
+      return {
+        name: project,
+        open: inProject.filter((task) => task.status === 'open'),
+        completed: inProject.filter((task) => task.status === 'completed'),
+      }
+    })
+  }, [boardView, matchesQuery, tasks, visibleProjects])
 
   const trashedTasks = useMemo(
     () => tasks.filter((task) => Boolean(task.deletedAt) && matchesQuery(task)),
@@ -276,19 +286,18 @@ function App() {
     [projects],
   )
 
-  function openComposer(project?: string) {
+  function openComposer(project: string) {
+    selectTask(null) // only one card is ever in edit mode
+    setBoardView('all') // the composer lives in a list column
     setComposerProject(project)
-    setComposerOpen(true)
+    setHiddenLists((hidden) => hidden.filter((name) => name !== project))
     setSidebarOpen(false)
   }
 
+  // The composer stays open after Enter, so this can fire repeatedly; it reads
+  // tasksRef rather than the render-time list to keep rapid entries in order.
   function handleCreateTask(taskDraft: TaskDraft) {
-    applyLocalChange(createTask(tasks, taskDraft))
-    setComposerOpen(false)
-    if (taskDraft.project) {
-      // Surface the task right away even if its list was unchecked.
-      setHiddenLists((hidden) => hidden.filter((name) => name !== taskDraft.project))
-    }
+    applyLocalChange(createTask(tasksRef.current, taskDraft))
   }
 
   function toggleList(project: string) {
@@ -324,6 +333,7 @@ function App() {
         applyLocalChange(deleteList(tasksRef.current, project))
         setProjects((current) => current.filter((name) => name !== project))
         setHiddenLists((hidden) => hidden.filter((name) => name !== project))
+        setComposerProject((current) => (current === project ? null : current))
       },
     })
   }
@@ -401,11 +411,13 @@ function App() {
   function chooseBoardView(next: 'all' | 'starred' | 'trash') {
     setBoardView(next)
     selectTask(null)
+    setComposerProject(null)
     setSidebarOpen(false)
   }
 
   function openSyncPanel() {
     selectTask(null)
+    setComposerProject(null)
     setSyncPanelOpen(true)
     setSidebarOpen(false)
   }
@@ -439,7 +451,7 @@ function App() {
       >
         {isExpanded ? (
           <div className="editor-head">
-            <button className={`complete-button priority-${task.priority}`} onClick={() => toggleComplete(task)} aria-label={task.status === 'completed' ? `Reopen ${task.title}` : `Complete ${task.title}`}>
+            <button className="complete-button" onClick={() => toggleComplete(task)} aria-label={task.status === 'completed' ? `Reopen ${task.title}` : `Complete ${task.title}`}>
               {task.status === 'completed' ? <Check size={14} /> : <Circle size={16} />}
             </button>
             <input
@@ -460,18 +472,20 @@ function App() {
           </div>
         ) : (
           <div className="row-main" onClick={() => { selectTask(task.id); setSyncPanelOpen(false) }}>
-            <button className={`complete-button priority-${task.priority}`} onClick={(event) => { event.stopPropagation(); toggleComplete(task) }} aria-label={task.status === 'completed' ? `Reopen ${task.title}` : `Complete ${task.title}`}>
+            <button className="complete-button" onClick={(event) => { event.stopPropagation(); toggleComplete(task) }} aria-label={task.status === 'completed' ? `Reopen ${task.title}` : `Complete ${task.title}`}>
               {task.status === 'completed' ? <Check size={14} /> : <Circle size={16} />}
             </button>
             <div className="board-copy">
               <h4 className={task.status === 'completed' ? 'done' : ''}>{task.title}</h4>
-              {task.note && <p>{stripHtml(task.note)}</p>}
-              {(task.dueDate || task.repeat || task.reminderAt || task.priority !== 'none') && (
+              {task.note && <p>{notePreview(task.note)}</p>}
+              {(task.dueDate || task.repeat) && (
                 <div className="board-chips">
-                  {task.dueDate && <span className="due-chip">{formatDueDate(task.dueDate)}</span>}
-                  {task.repeat && <span className="due-chip"><RepeatIcon size={11} /></span>}
-                  {task.reminderAt && <span className="due-chip"><Bell size={11} /></span>}
-                  {task.priority !== 'none' && <span className={`priority-label ${task.priority}`}>{task.priority}</span>}
+                  {task.dueDate && (
+                    <span className={`due-chip ${isOverdue(task.dueDate, task.dueTime) ? 'overdue' : ''}`}>
+                      {formatDue(task.dueDate, task.dueTime)}
+                    </span>
+                  )}
+                  {task.repeat && <span className="due-chip" title={`Repeats ${task.repeat}`}><RepeatIcon size={11} /></span>}
                 </div>
               )}
             </div>
@@ -503,58 +517,28 @@ function App() {
           >
             <div className="editor-reveal-inner">
               <div className="editor-body">
-                <RichNoteEditor
-                  key={task.id}
-                  initialHtml={task.note ?? ''}
-                  placeholder="Details"
-                  ariaLabel="Task details"
-                  className="note-editor rich-note editor-notes"
-                  onChange={(html) => patch({ note: html || undefined })}
+                <div className="editor-details-row">
+                  <AlignLeft size={15} className="composer-icon" aria-hidden="true" />
+                  <TaskDetails key={task.id} note={task.note} onChange={(text) => patch({ note: text || undefined })} />
+                </div>
+
+                {task.images?.length ? (
+                  <div className="image-grid">
+                    {task.images.map((image) => (
+                      <div key={image.id} className="image-thumb">
+                        <img src={image.dataUrl} alt="" onClick={() => setLightboxImage(image.dataUrl)} />
+                        <button className="image-remove" onClick={() => applyLocalChange(removeImage(tasks, task.id, image.id))} aria-label="Remove image"><X size={12} /></button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="paste-hint">Paste an image (⌘V) to attach it.</p>
+                )}
+
+                <DueControls
+                  value={{ dueDate: task.dueDate, dueTime: task.dueTime, repeat: task.repeat }}
+                  onChange={(next) => patch(next)}
                 />
-
-                <div className="editor-grid">
-                  <label>Due date
-                    <input type="date" value={task.dueDate ?? ''} onChange={(event) => patch({ dueDate: event.target.value || undefined })} />
-                  </label>
-                  <label>Priority
-                    <select value={task.priority} onChange={(event) => patch({ priority: event.target.value as Task['priority'] })}>
-                      <option value="none">None</option>
-                      <option value="low">Low</option>
-                      <option value="medium">Medium</option>
-                      <option value="high">High</option>
-                    </select>
-                  </label>
-                  <label className="editor-wide">Reminder
-                    <input
-                      type="datetime-local"
-                      value={isoToLocalInput(task.reminderAt)}
-                      onChange={(event) => patch({ reminderAt: event.target.value ? new Date(event.target.value).toISOString() : undefined })}
-                    />
-                  </label>
-                  <label className="editor-wide">Repeat
-                    <select value={task.repeat ?? 'none'} onChange={(event) => patch({ repeat: event.target.value === 'none' ? undefined : (event.target.value as Task['repeat']) })}>
-                      <option value="none">Doesn't repeat</option>
-                      <option value="daily">Daily</option>
-                      <option value="weekly">Weekly</option>
-                      <option value="monthly">Monthly</option>
-                    </select>
-                  </label>
-                </div>
-
-                <div className="editor-images">
-                  {task.images?.length ? (
-                    <div className="image-grid">
-                      {task.images.map((image) => (
-                        <div key={image.id} className="image-thumb">
-                          <img src={image.dataUrl} alt="" onClick={() => setLightboxImage(image.dataUrl)} />
-                          <button className="image-remove" onClick={() => applyLocalChange(removeImage(tasks, task.id, image.id))} aria-label="Remove image"><X size={12} /></button>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <p className="sync-hint">Paste an image (⌘V) to attach it here.</p>
-                  )}
-                </div>
               </div>
             </div>
           </div>
@@ -567,7 +551,7 @@ function App() {
     <article key={task.id} className="board-row trash-row">
       <div className="board-copy">
         <h4>{task.title}</h4>
-        <p>{task.project} · deleted {formatDueDate(task.deletedAt?.slice(0, 10)).toLowerCase()}</p>
+        <p>{task.project} · deleted {formatDue(task.deletedAt?.slice(0, 10)).toLowerCase()}</p>
       </div>
       <button className="row-restore" onClick={() => applyLocalChange(restoreTask(tasks, task.id))} aria-label={`Restore ${task.title}`}>
         <RotateCcw size={14} />
@@ -591,7 +575,7 @@ function App() {
           <button className="icon-button sidebar-close" onClick={() => setSidebarOpen(false)} aria-label="Close sidebar"><X size={18} /></button>
         </div>
 
-        <button className="create-button" onClick={() => openComposer()}><Plus size={17} /> Create</button>
+        <button className="create-button" onClick={() => openComposer(visibleProjects[0] ?? 'Inbox')}><Plus size={17} /> Create</button>
 
         <nav className="nav-list" aria-label="Task views">
           <button className={boardView === 'all' ? 'active' : ''} onClick={() => chooseBoardView('all')}><CheckCircle2 size={17} /><span>All tasks</span><em>{openCount}</em></button>
@@ -701,7 +685,15 @@ function App() {
                 </div>
 
                 {boardView === 'all' && (
-                  <button className="column-add" onClick={() => openComposer(column.name)}><Plus size={16} /> Add a task</button>
+                  composerProject === column.name ? (
+                    <TaskComposer
+                      project={column.name}
+                      onCreate={handleCreateTask}
+                      onClose={() => setComposerProject(null)}
+                    />
+                  ) : (
+                    <button className="column-add" onClick={() => openComposer(column.name)}><Plus size={16} /> Add a task</button>
+                  )
                 )}
 
                 <div className="column-tasks">
@@ -733,16 +725,6 @@ function App() {
           </div>
         </section>
       </main>
-
-      {composerOpen && (
-        <TaskCreateModal
-          initialTitle=""
-          initialProject={composerProject}
-          projects={projects}
-          onCancel={() => setComposerOpen(false)}
-          onCreate={handleCreateTask}
-        />
-      )}
 
       {confirmRequest && (
         <ConfirmDialog

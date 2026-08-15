@@ -7,7 +7,7 @@ import { getLastSyncedAt, setUpdatedAt } from './syncMeta'
 const T1 = '2026-08-14T00:00:00.000Z'
 
 const tasks: Task[] = [
-  { id: '1', title: 'Buy milk', status: 'open', project: 'Inbox', priority: 'none', createdAt: T1 },
+  { id: '1', title: 'Buy milk', status: 'open', project: 'Inbox', createdAt: T1 },
 ]
 
 function fakeApi(overrides: Partial<ApiClient> = {}): ApiClient {

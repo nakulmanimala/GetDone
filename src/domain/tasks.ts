@@ -1,5 +1,6 @@
+import { extractNoteImages, htmlToText } from './notes'
+
 export type TaskStatus = 'open' | 'completed'
-export type Priority = 'none' | 'low' | 'medium' | 'high'
 export type View = 'inbox' | 'today' | 'upcoming' | 'completed'
 export type Repeat = 'daily' | 'weekly' | 'monthly'
 
@@ -14,10 +15,12 @@ export interface Task {
   title: string
   status: TaskStatus
   project: string
-  priority: Priority
+  /** Calendar day, `YYYY-MM-DD`. */
   dueDate?: string
+  /** Optional time of day on the due date, `HH:MM`. Meaningless without dueDate. */
+  dueTime?: string
+  /** Plain text; legacy tasks may still hold HTML until they are next edited. */
   note?: string
-  reminderAt?: string
   repeat?: Repeat
   flagged?: boolean
   createdAt: string
@@ -30,11 +33,11 @@ export interface TaskDraft {
   title: string
   note?: string
   project?: string
-  priority?: Priority
   dueDate?: string
-  reminderAt?: string
+  dueTime?: string
   repeat?: Repeat
   flagged?: boolean
+  images?: TaskImage[]
 }
 
 export const initialTasks: Task[] = [
@@ -43,7 +46,6 @@ export const initialTasks: Task[] = [
     title: 'Plan the week ahead',
     status: 'open',
     project: 'Personal',
-    priority: 'high',
     dueDate: new Date().toISOString().slice(0, 10),
     note: 'Choose the three outcomes that would make this week successful.',
     createdAt: new Date().toISOString(),
@@ -53,7 +55,6 @@ export const initialTasks: Task[] = [
     title: 'Review infrastructure changes',
     status: 'open',
     project: 'DevOps',
-    priority: 'medium',
     dueDate: new Date(Date.now() + 86_400_000).toISOString().slice(0, 10),
     note: 'Check the pending Terraform plan before deployment.',
     createdAt: new Date().toISOString(),
@@ -63,7 +64,6 @@ export const initialTasks: Task[] = [
     title: 'Set up S3 backup profile',
     status: 'open',
     project: 'GetDone',
-    priority: 'low',
     note: 'S3 backup and multi-device sync arrive in a later milestone.',
     createdAt: new Date().toISOString(),
   },
@@ -71,6 +71,32 @@ export const initialTasks: Task[] = [
 
 const defaultId = () => crypto.randomUUID()
 const defaultNow = () => new Date()
+
+// Details were HTML while the editor was rich text. Flatten them to plain text
+// on load, rescuing any pasted image that lived inside the markup into the
+// task's own image list so nothing is lost on the first edit.
+export function migrateLegacyNotes(
+  tasks: Task[],
+  createId: () => string = defaultId,
+  now: () => Date = defaultNow,
+): Task[] {
+  if (!tasks.some((task) => task.note && /</.test(task.note))) return tasks
+
+  return tasks.map((task) => {
+    if (!task.note || !/</.test(task.note)) return task
+    const rescued = extractNoteImages(task.note).map((dataUrl) => ({
+      id: createId(),
+      dataUrl,
+      addedAt: now().toISOString(),
+    }))
+    const text = htmlToText(task.note)
+    return {
+      ...task,
+      note: text || undefined,
+      images: rescued.length ? [...(task.images ?? []), ...rescued] : task.images,
+    }
+  })
+}
 
 export function addTask(
   tasks: Task[],
@@ -96,12 +122,12 @@ export function createTask(
       title,
       status: 'open',
       project: draft.project ?? 'Inbox',
-      priority: draft.priority ?? 'none',
       dueDate: draft.dueDate,
+      dueTime: draft.dueDate ? draft.dueTime : undefined,
       note: draft.note,
-      reminderAt: draft.reminderAt,
       repeat: draft.repeat,
       flagged: draft.flagged || undefined,
+      images: draft.images?.length ? draft.images : undefined,
       createdAt: now().toISOString(),
     },
     ...tasks,
